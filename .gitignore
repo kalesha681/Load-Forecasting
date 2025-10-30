@@ -1,0 +1,16 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# IDE/workspace
+.vscode/
+*.code-workspace
+.ipynb_checkpoints
+.DS_Store
+Thumbs.db
+
+# Output artifacts - all generated plots/models/outputs
+output/*
+
+# (Uncomment to ignore big data files in git)
+# data/*
