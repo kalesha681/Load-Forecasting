@@ -1,5 +1,42 @@
 # PJME Hourly Load Forecasting (Deep Learning + Classical TS)
 
+[![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![TensorFlow](https://img.shields.io/badge/TensorFlow-Deep%20Learning-FF6F00?logo=tensorflow&logoColor=white)](https://www.tensorflow.org/)
+[![Keras](https://img.shields.io/badge/Keras-API-D00000?logo=keras&logoColor=white)](https://keras.io/)
+[![Statsmodels](https://img.shields.io/badge/Statsmodels-SARIMA-2C3E50)](https://www.statsmodels.org/)
+[![Pandas](https://img.shields.io/badge/Pandas-Timeseries-150458?logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![License](https://img.shields.io/badge/License-MIT-green)](#)
+
+## Abstract
+We present an end‑to‑end, reproducible framework for hourly electric load forecasting using both deep learning (LSTM) and classical statistical modeling (SARIMA), alongside a moving‑average baseline. The system standardizes data preprocessing (deduplication, hourly alignment, interpolation), enforces leakage‑safe splits, and outputs thorough diagnostics (plots, RMSE/MAE/MAPE). SARIMA parameters are compactly auto‑tuned against validation MAPE; the LSTM uses a 24→1 sliding window with careful scaling. Outputs are organized per‑model in `output/` to support research workflows and hiring portfolios.
+
+## Why This Matters
+- Accurate load forecasts support grid reliability, economic dispatch, and renewable integration.
+- Provides a transparent benchmark between deep learning and classical TS on the same pipeline.
+- Production‑style structure and visualizations suitable for technical interviews and case studies.
+
+## Concept Overview (Quick References)
+- LSTM: sequence modeling for nonlinear, long‑range temporal dependencies (windowed supervision, scaling)
+- SARIMA: seasonal differencing + AR/MA terms for daily cycles; MLE fitting with validation‑guided selection
+- Metrics: RMSE/MAE (scale‑dependent), MAPE (%) for business interpretability (mind near‑zero caveat)
+
+## Methodology Flow (High‑Level)
+```mermaid
+flowchart LR
+    A[Raw CSV: PJME_hourly.csv] --> B[Parse Datetime / Set Index]
+    B --> C[Sort / Drop Duplicates]
+    C --> D[asfreq('h') / Interpolate / Fill]
+    D --> E{Branch}
+    E -->|LSTM| F[Scale (MinMax) → 24h windows → LSTM(64) → Forecast]
+    E -->|SARIMA| G[Last 1y train → Compact grid (MAPE) → Forecast 7d]
+    E -->|Moving Avg| H[Rolling means (6h,12h,24h,72h,168h)]
+    F --> I[Inverse scale]
+    G --> I
+    H --> J[Visual Diagnostics]
+    I --> J[Visual Diagnostics]
+    J --> K[RMSE / MAE / MAPE, Saved Plots, Organized Outputs]
+```
+
 A complete, production-style time series forecasting project for hourly electricity demand (`PJME_MW`) using:
 - LSTM (TensorFlow/Keras)
 - SARIMA (statsmodels) with compact auto-tuning to reduce MAPE
