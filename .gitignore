@@ -1,16 +1,23 @@
 # Python bytecode
 __pycache__/
 *.py[cod]
+*.pyc
 
 # IDE/workspace
 .vscode/
 *.code-workspace
-.ipynb_checkpoints
+.ipynb_checkpoints/
 .DS_Store
 Thumbs.db
 
+# Virtual environments
+venv/
+.env/
+
 # Output artifacts - all generated plots/models/outputs
 output/*
+plots/*
+models/*
 
 # (Uncomment to ignore big data files in git)
 # data/*
