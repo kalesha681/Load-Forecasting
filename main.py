@@ -1,6 +1,13 @@
 import sys
 import os
 
+# Add src to path so we can import modules
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
+from src.models.lstm import run_lstm
+from src.models.sarima import run_sarima
+from src.models.moving_average import run_ma
+
 USAGE = """
 Load-Forecasting entry point
 
@@ -16,15 +23,6 @@ Note:
   - Ensure dependencies: pip install -r requirements.txt
   - For LSTM, you may also need: pip install tensorflow keras
 """
-
-def run_lstm():
-	os.system("python src/lstm_forecast.py")
-
-def run_sarima():
-	os.system("python src/sarima_forecast.py")
-
-def run_ma():
-	os.system("python src/moving_average_forecast.py")
 
 def main():
 	if len(sys.argv) < 2:
