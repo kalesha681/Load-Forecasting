@@ -148,4 +148,4 @@ This project enforces determinism to ensure results can be replicated.
 This project is for academic and research purposes. The datasets are property of NITI Aayog / ICED. While the code strives for accuracy, these forecasts should not be used for critical real-time grid operations without further validation.
 
 ## Connect
-[Connect on LinkedIn](https://www.linkedin.com/in/your-profile)
+[Connect on LinkedIn](https://www.linkedin.com/in/kalesha-shaik-a27a302b6/)
