@@ -1,7 +1,9 @@
+
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import warnings
 warnings.filterwarnings("ignore")
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
@@ -10,139 +12,171 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
-# Import shared modules
-from ..config import SPLIT_DATE, ensure_output_dir
+from ..config import ensure_output_dir, COL_DEMAND_YEARLY, PROCESSED_DATA_DIR
 from ..data_loader import load_and_preprocess, train_test_split
-from ..metrics import evaluate_mape
+from ..metrics import evaluate_mape, evaluate_rmse
 from ..visualization import plot_time_series, plot_train_test_split, plot_forecast_vs_actual
 
-# --- Feature Engineering ---
 def add_time_features(df):
-    """Add hour, dayofweek, month, year, dayofyear as features."""
+    """Add hour, dayofweek, month, etc."""
+    df = df.copy()
     df['hour'] = df.index.hour
     df['dayofweek'] = df.index.dayofweek
     df['month'] = df.index.month
-    df['year'] = df.index.year
-    df['dayofyear'] = df.index.dayofyear
     return df
 
-# --- Scaling & Windowing ---
-def scale_data(train, test):
-    scaler = MinMaxScaler()
-    train_scaled = scaler.fit_transform(train)
-    test_scaled = scaler.transform(test)
-    return train_scaled, test_scaled, scaler
-
 def create_sequences(data, n_input=24):
-    # Vectorized sequence creation
-    if data.ndim > 1:
-        data = data.flatten()
+    """
+    Vectorized sequence creation using stride_tricks.
+    data: 1D or 2D array [samples, features]
+    n_input: lookback window size
+    """
+    # ensure 2D [samples, features]
+    if data.ndim == 1:
+        data = data.reshape(-1, 1)
         
-    n_samples = len(data) - n_input
-    if n_samples <= 0:
+    n_samples, n_features = data.shape
+    n_sequences = n_samples - n_input
+    
+    if n_sequences <= 0:
         return np.array([]), np.array([])
         
-    strides = data.strides[0]
+    # X: [n_sequences, n_input, n_features]
+    # We want a sliding window view
+    # Stride tricks for 2D array to get 3D view
+    
+    # Calculate strides
+    # data.strides is (bytes_per_row, bytes_per_col)
+    s0, s1 = data.strides
+    
+    # Shape of result: (n_sequences, n_input, n_features)
+    # Strides: (step to next sequence, step to next time step, step to next feature)
+    # step to next sequence = s0 (move down one row in original)
+    # step to next time step = s0 (move down one row in original)
+    # step to next feature = s1
+    
     X = np.lib.stride_tricks.as_strided(
-        data, 
-        shape=(n_samples, n_input), 
-        strides=(strides, strides)
+        data,
+        shape=(n_sequences, n_input, n_features),
+        strides=(s0, s0, s1)
     )
+    
+    # y is the next step after the window
+    # y corresponding to X[i] is data[i + n_input]
     y = data[n_input:]
+    
     return X, y
 
-# --- Model Building ---
-def build_lstm_model(n_timesteps, n_features):
-    model = Sequential()
-    model.add(Input(shape=(n_timesteps, n_features)))
-    model.add(LSTM(64, return_sequences=False))
-    model.add(Dropout(0.2))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mse')
-    return model
-
-# --- Main Pipeline ---
-def run_lstm():
+def run_lstm(data_path=None, test_days=7):
     # Config
-    N_INPUT = 24
-    EPOCHS = 30
-    BATCH_SIZE = 128
+    N_INPUT = 24 * 2 # Lookback 48 hours
+    EPOCHS = 20 # Keep it reasonable
+    BATCH_SIZE = 64
     
-    # Output setup
     output_dir = ensure_output_dir('LSTM')
-    PLOT_OUT = os.path.join(output_dir, 'lstm_raw_timeseries.png')
-    SPLIT_PLOT_OUT = os.path.join(output_dir, 'lstm_train_test_split.png')
-    LOSS_PLOT_OUT = os.path.join(output_dir, 'lstm_training_loss.png')
-    VS_PLOT_OUT = os.path.join(output_dir, 'lstm_vs_actual.png')
-    ZOOM_PLOT_OUT = os.path.join(output_dir, 'lstm_vs_actual_recent.png')
-    MODEL_OUT = os.path.join(output_dir, 'lstm_pjme_model.keras')
+    PLOT_OUT = os.path.join(output_dir, 'lstm_forecast.png')
+    METRICS_PATH = os.path.join(output_dir, 'metrics.csv')
+    MODEL_OUT = os.path.join(output_dir, 'lstm_model.keras')
 
-    # Data Loading
-    df = load_and_preprocess()
-    plot_time_series(df, 'PJME Hourly Power Demand', outpath=PLOT_OUT)
-    
-    df = add_time_features(df)
-    train_df, test_df = train_test_split(df, split_date=SPLIT_DATE)
-    
-    print(f"Train samples: {len(train_df)}  | Dates: {train_df.index.min()} — {train_df.index.max()}")
-    print(f"Test samples:  {len(test_df)}  | Dates: {test_df.index.min()} — {test_df.index.max()}")
-    plot_train_test_split(train_df, test_df, outpath=SPLIT_PLOT_OUT)
+    # Load Data
+    if data_path:
+        df = pd.read_csv(data_path, index_col=0, parse_dates=True)
+    else:
+        df = load_and_preprocess()
 
-    # Prepare data for LSTM
-    train, test = pd.DataFrame(train_df['PJME_MW']), pd.DataFrame(test_df['PJME_MW'])
-    train_scaled, test_scaled, scaler = scale_data(train, test)
+    col = COL_DEMAND_YEARLY if COL_DEMAND_YEARLY in df.columns else df.columns[0]
+    
+    # Train/Test Split
+    train_df, test_df = train_test_split(df, test_days=test_days)
+    
+    train_data = train_df[[col]].values
+    test_data = test_df[[col]].values
+    
+    # Scale
+    scaler = MinMaxScaler()
+    train_scaled = scaler.fit_transform(train_data)
+    # Use same scaler
+    test_scaled = scaler.transform(test_data)
+    
+    # Create Sequences
+    # For testing, we need history from train to predict first elements of test if strictly sequential
+    # But usually simple approach: create sequences from train, and from test (loosing first N_INPUT of test)
+    # Better: concat last N_INPUT of train to test
+    
     X_train, y_train = create_sequences(train_scaled, n_input=N_INPUT)
-    X_test, y_test = create_sequences(np.vstack([train_scaled[-N_INPUT:], test_scaled]), n_input=N_INPUT)
-
-    # Reshape for LSTM
-    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
-    X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
-
-    # Model Building
-    print("\n--- Model Building ---")
-    model = build_lstm_model(N_INPUT, 1)
-    model.summary()
-
-    # Training
-    print("\n--- Training Model ---")
-    history = model.fit(X_train, y_train, epochs=EPOCHS, batch_size=BATCH_SIZE, validation_split=0.1, verbose=2)
-
-    # Plot Loss
-    plt.figure()
-    plt.plot(history.history['loss'], label='Train Loss')
-    plt.plot(history.history['val_loss'], label='Val Loss')
-    plt.legend()
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss (MSE)')
-    plt.title('Training and Validation Loss over Epochs')
-    plt.savefig(LOSS_PLOT_OUT)
-    plt.show()
-
+    
+    # Prepare test input
+    # We need last N_INPUT from train to start predicting test
+    concat_test = np.vstack([train_scaled[-N_INPUT:], test_scaled])
+    X_test, y_test = create_sequences(concat_test, n_input=N_INPUT)
+    
+    print(f"Train X shape: {X_train.shape}")
+    print(f"Test X shape: {X_test.shape}")
+    
+    # Build Model
+    model = Sequential([
+        Input(shape=(N_INPUT, 1)),
+        LSTM(64, return_sequences=False),
+        Dropout(0.2),
+        Dense(1)
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    
+    # Train
+    print("Training LSTM...")
+    history = model.fit(
+        X_train, y_train,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        validation_split=0.1,
+        verbose=1
+    )
+    
+    # Predict
+    y_pred_scaled = model.predict(X_test)
+    y_pred = scaler.inverse_transform(y_pred_scaled)
+    
+    # y_test is scaled, inverse it for metrics
+    y_true = scaler.inverse_transform(y_test)
+    
+    # Align dates for plotting/saving
+    # y_true corresponds to test_df (since we padded carefully)
+    # Check lengths
+    if len(y_pred) != len(test_df):
+        print(f"Warning: Length mismatch. Pred: {len(y_pred)}, Test DF: {len(test_df)}")
+        # If we did it right, they should match exactly because of the padding
+    
     # Evaluation
-    print("\n--- Evaluation on Test Data ---")
-    y_pred = model.predict(X_test)
-    y_pred_inv = scaler.inverse_transform(y_pred.reshape(-1, 1))[:, 0]
-    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, 1))[:, 0]
+    rmse = evaluate_rmse(y_true, y_pred)
+    mape = evaluate_mape(y_true, y_pred)
     
-    rmse = np.sqrt(mean_squared_error(y_test_inv, y_pred_inv))
-    mae = mean_absolute_error(y_test_inv, y_pred_inv)
-    mape = evaluate_mape(y_test_inv, y_pred_inv)
+    print(f"\nFinal Results on Test Set:")
+    print(f"RMSE: {rmse:.2f}")
+    print(f"MAPE: {mape*100:.2f}%")
     
-    print(f'RMSE: {rmse:.2f}\nMAE: {mae:.2f}')
-    print(f'Mean Absolute Percentage Error: {mape*100:.2f}%')
-
-    # Plots
-    plot_forecast_vs_actual(test_df.index[-len(y_test_inv):], y_test_inv, y_pred_inv, 
-                          'LSTM: Actual vs Forecast (Full Test Period)', outpath=VS_PLOT_OUT)
-                          
-    recent_n = 24*30*3
-    plot_forecast_vs_actual(test_df.index[-recent_n:], y_test_inv[-recent_n:], y_pred_inv[-recent_n:], 
-                          'LSTM: Actual vs Forecast (Zoomed: Last 3 Months)', outpath=ZOOM_PLOT_OUT)
-
+    # Save Metrics
+    metrics_df = pd.DataFrame([{
+        'Model': 'LSTM',
+        'RMSE': rmse,
+        'MAPE': mape,
+        'Lookback': N_INPUT,
+        'Epochs': EPOCHS
+    }])
+    metrics_df.to_csv(METRICS_PATH, index=False)
+    print(f"Metrics saved to {METRICS_PATH}")
+    
+    # Plot
+    plt.figure(figsize=(15,6))
+    plt.plot(test_df.index, y_true, label='Actual')
+    plt.plot(test_df.index, y_pred, label='LSTM Forecast', linestyle='--')
+    plt.title(f"LSTM Forecast (MAPE={mape*100:.2f}%)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(PLOT_OUT)
+    
     # Save Model
-    print(f"\nSaving trained model to {MODEL_OUT} ...")
     model.save(MODEL_OUT)
-    print("Model saved!")
+    print("Model saved.")
 
 if __name__ == "__main__":
     run_lstm()

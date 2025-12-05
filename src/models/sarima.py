@@ -7,18 +7,19 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 import numpy as np
 from joblib import Parallel, delayed
 
-from ..config import ensure_output_dir
-from ..data_loader import load_and_preprocess
-from ..metrics import evaluate_mape
+from ..config import ensure_output_dir, COL_DEMAND_YEARLY, SPLIT_DATE
+from ..data_loader import load_and_preprocess, train_test_split
+from ..metrics import evaluate_mape, evaluate_rmse
 
 def evaluate_candidate(order, seasonal_order, train_sub, val_sub, log_flag, seasonal_period):
     try:
         y_train = np.log1p(train_sub) if log_flag else train_sub
         y_val = np.log1p(val_sub) if log_flag else val_sub
         
+        # Fast fit
         model = SARIMAX(y_train, order=order, seasonal_order=seasonal_order,
                         enforce_stationarity=False, enforce_invertibility=False)
-        fit = model.fit(disp=False, maxiter=80, method='lbfgs')
+        fit = model.fit(disp=False, maxiter=50, method='lbfgs')
         pred = fit.forecast(steps=len(val_sub))
         
         if log_flag:
@@ -35,29 +36,40 @@ def evaluate_candidate(order, seasonal_order, train_sub, val_sub, log_flag, seas
     return None
 
 def tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True):
-    """Fast candidate search using validation MAPE on last 7 days (Parallelized)."""
+    """Fast candidate search using validation MAPE on recent history (Parallelized)."""
+    # Validation horizon: 7 days
     horizon = 24 * 7
     if len(train_series) <= horizon + 24:
+        # Not enough data
         return (1, 1, 1), (1, 1, 1, seasonal_period), np.inf, False
 
+    # Candidates (simplified list for speed, can be expanded)
     candidates = [
         ((1,1,1), (1,1,1,seasonal_period)),
-        ((2,1,2), (1,1,1,seasonal_period)),
-        ((1,1,2), (1,1,1,seasonal_period)),
-        ((2,1,1), (1,1,1,seasonal_period)),
+        ((1,1,1), (0,1,1,seasonal_period)),
         ((0,1,1), (0,1,1,seasonal_period)),
-        ((1,1,0), (0,1,1,seasonal_period)),
+        ((1,0,1), (0,1,1,seasonal_period)),
     ]
 
-    train_sub = train_series.iloc[:-horizon]
-    val_sub = train_series.iloc[-horizon:]
+    # Use last 3 months for tuning to speed up
+    tuning_window = 24 * 90 
+    train_for_tuning = train_series.iloc[-tuning_window:] if len(train_series) > tuning_window else train_series
+    
+    # Split validation set
+    train_sub = train_for_tuning.iloc[:-horizon]
+    val_sub = train_for_tuning.iloc[-horizon:]
     
     tasks = []
     log_options = ([True] if use_log else [False]) + [False]
+    # Unique combinations
+    seen = set()
     for log_flag in set(log_options):
         for order, seasonal_order in candidates:
-            tasks.append((order, seasonal_order, log_flag))
+            if (order, seasonal_order, log_flag) not in seen:
+                tasks.append((order, seasonal_order, log_flag))
+                seen.add((order, seasonal_order, log_flag))
             
+    print(f"Parallel tuning on {len(tasks)} candidates...")
     results = Parallel(n_jobs=-1)(
         delayed(evaluate_candidate)(order, seasonal_order, train_sub, val_sub, log_flag, seasonal_period)
         for order, seasonal_order, log_flag in tasks
@@ -65,74 +77,98 @@ def tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True):
     
     valid_results = [r for r in results if r is not None]
     if not valid_results:
+        # Fallback
         return ((1,1,1), (1,1,1,seasonal_period), np.inf, False)
         
-    valid_results.sort(key=lambda x: x[2])
-    return valid_results[0]
+    valid_results.sort(key=lambda x: x[2]) # Sort by MAPE
+    best = valid_results[0]
+    return best
 
-def run_sarima():
+def run_sarima(data_path=None, test_days=7):
     # Output setup
     output_dir = ensure_output_dir('SARIMA')
     PLOT1_PATH = os.path.join(output_dir, "sarima_forecast.png")
     PLOT2_PATH = os.path.join(output_dir, "sarima_vs_actual.png")
+    METRICS_PATH = os.path.join(output_dir, "metrics.csv")
 
     # Data Loading
-    df = load_and_preprocess()
-
-    # Train/test split (1 year for training, next 7 days for testing)
-    last_train_date = df.index.max() - pd.Timedelta(days=7)
-    train_start_date = last_train_date - pd.Timedelta(days=365)
-    train = df.loc[train_start_date:last_train_date, 'PJME_MW']
-    test = df.loc[last_train_date+pd.Timedelta(hours=1):(last_train_date+pd.Timedelta(days=7)), 'PJME_MW']
+    if data_path:
+        print(f"Loading data from {data_path}...")
+        df = pd.read_csv(data_path, index_col=0, parse_dates=True)
+    else:
+        df = load_and_preprocess()
+    
+    # Identify column
+    col = COL_DEMAND_YEARLY if COL_DEMAND_YEARLY in df.columns else df.columns[0]
+    
+    # Train/Test Split
+    # We use the specified test_days (default 7) for evaluation
+    train, test = train_test_split(df, test_days=test_days)
+    
+    train_series = train[col]
+    test_series = test[col]
 
     print(f"Training window: {train.index.min()} -- {train.index.max()} ({len(train)} hrs)")
-    print(f"Test window (prediction): {test.index.min()} -- {test.index.max()} ({len(test)} hrs)")
+    print(f"Test window: {test.index.min()} -- {test.index.max()} ({len(test)} hrs)")
 
     # Auto-tune
-    print("\nTuning SARIMA hyperparameters (validation MAPE search)...")
-    best_order, best_seasonal_order, val_mape, use_log = tune_sarima_by_mape(train, seasonal_period=24, use_log=True)
-    print(f"Best order: {best_order}, Best seasonal_order: {best_seasonal_order}, Validation MAPE: {val_mape*100:.2f}% (log={use_log})")
+    print("\nTuning SARIMA hyperparameters...")
+    best_order, best_seasonal_order, val_mape, use_log = tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True)
+    print(f"Best Configuration: Order={best_order}, Seasonal={best_seasonal_order}, Log={use_log}")
+    print(f"Validation MAPE during tuning: {val_mape*100:.2f}%")
 
-    # Fit best model
-    y_train_full = np.log1p(train) if use_log else train
-    model = SARIMAX(y_train_full, order=best_order, seasonal_order=best_seasonal_order,
+    # Fit best model on FULL training data
+    y_train = np.log1p(train_series) if use_log else train_series
+    
+    model = SARIMAX(y_train, order=best_order, seasonal_order=best_seasonal_order,
                     enforce_stationarity=False, enforce_invertibility=False)
+    print("Fitting final model...")
     fit = model.fit(disp=False, maxiter=100, method='lbfgs')
-    pred = fit.forecast(steps=7*24)
-    forecast = np.expm1(pred) if use_log else pred
-    forecast = pd.Series(forecast, index=test.index)
+    
+    # Forecast
+    steps = len(test)
+    pred_trans = fit.forecast(steps=steps)
+    forecast = np.expm1(pred_trans) if use_log else pred_trans
+    forecast.index = test.index # Align index
+    
+    # Evaluation
+    rmse = evaluate_rmse(test_series.values, forecast.values)
+    mape = evaluate_mape(test_series.values, forecast.values)
+    
+    print(f"\nFinal Results on Test Set:")
+    print(f"RMSE: {rmse:.2f}")
+    print(f"MAPE: {mape*100:.2f}%")
 
-    # Plot 1
+    # Save Metrics
+    metrics_df = pd.DataFrame([{
+        'Model': 'SARIMA',
+        'RMSE': rmse,
+        'MAPE': mape,
+        'Order': str(best_order),
+        'Seasonal': str(best_seasonal_order),
+        'Log': use_log
+    }])
+    metrics_df.to_csv(METRICS_PATH, index=False)
+    print(f"Metrics saved to {METRICS_PATH}")
+
+    # Plot
     plt.figure(figsize=(15,6))
-    plt.plot(train.index, train, label='Train Data', color='blue')
-    plt.plot(test.index, test, label='Actual Load (Next 7 Days)', color='black')
-    plt.plot(test.index, forecast, label='SARIMA Forecast', color='red', linestyle='--')
-    plt.title("SARIMA Forecast: Next 7 Days (Trained on Last Year, Auto-tuned by MAPE)")
-    plt.xlabel("Time")
-    plt.ylabel("Load (MW)")
+    plt.plot(train_series.index[-24*14:], train_series.iloc[-24*14:], label='Train (Last 2 Weeks)')
+    plt.plot(test_series.index, test_series, label='Actual Test')
+    plt.plot(forecast.index, forecast, label='SARIMA Forecast', linestyle='--')
+    plt.title(f"SARIMA Forecast (MAPE={mape*100:.2f}%)")
     plt.legend()
-    plt.grid(True)
     plt.tight_layout()
     plt.savefig(PLOT1_PATH)
-    plt.show()
-
-    # Evaluation
-    rmse = float(np.sqrt(np.mean((test.values - forecast.values)**2)))
-    mape = evaluate_mape(test.values, forecast.values)
-    print(f"RMSE: {rmse:.2f}")
-    print(f"MAPE: {mape*100:.2f}% (Mean Absolute Percentage Error)")
-
-    # Plot 2
-    plt.figure(figsize=(12,5))
-    plt.plot(test.index, test, label='Actual Load', linewidth=2)
-    plt.plot(test.index, forecast, label='Predicted Load', linestyle='--', color='red')
-    plt.title('Actual vs Predicted Load (SARIMA, Next 7 Days, Auto-tuned by MAPE)')
-    plt.xlabel('Time')
-    plt.ylabel('Load (MW)')
+    
+    plt.figure(figsize=(10,5))
+    plt.plot(test_series.index, test_series, label='Actual')
+    plt.plot(forecast.index, forecast, label='Forecast', linestyle='--')
+    plt.title("Detailed View: Actual vs Forecast")
     plt.legend()
     plt.tight_layout()
     plt.savefig(PLOT2_PATH)
-    plt.show()
+    print("Plots saved.")
 
 if __name__ == "__main__":
     run_sarima()

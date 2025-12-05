@@ -16,7 +16,7 @@ venv/
 
 # Output artifacts - all generated plots/models/outputs
 output/*
-plots/*
+# plots/*
 models/*
 
 # (Uncomment to ignore big data files in git)

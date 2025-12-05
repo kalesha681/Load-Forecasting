@@ -1,0 +1,2 @@
+Model,RMSE,MAPE,Order,Seasonal,Log
+SARIMA,6557.838253173794,0.023331006382699946,"(0, 1, 1)","(0, 1, 1, 24)",False
