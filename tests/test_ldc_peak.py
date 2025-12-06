@@ -64,4 +64,4 @@ class TestPeakDay:
         run_peak_day_pipeline(yearly_path, peak_path, tmp_path)
         
         captured = capsys.readouterr()
-        assert "Peak data empty" in captured.out
+        assert "peak_data_empty" in captured.out
