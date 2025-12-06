@@ -17,8 +17,6 @@ def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     PLOT_PATH = output_dir / 'peak_day_forecast.png'
     METRICS_PATH = output_dir / 'metrics.csv'
-
-    METRICS_PATH = output_dir / 'metrics.csv'
     
     # Security Check
     yearly_path = validate_path(yearly_path)

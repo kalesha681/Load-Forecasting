@@ -45,7 +45,7 @@ class TestMetrics:
         assert rmse == 1.0
 
     def test_input_validation(self):
-        """Test validaton logic in metrics."""
+        """Test validation logic in metrics."""
         # None input
         with pytest.raises(ValueError, match="cannot be None"):
             evaluate_rmse(None, [1, 2])

@@ -141,8 +141,6 @@ def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path
     PLOT2_PATH = output_dir / "sarima_vs_actual.png"
     METRICS_PATH = output_dir / "metrics.csv"
     
-    METRICS_PATH = output_dir / "metrics.csv"
-    
     sarima_config = MODEL_CONFIG['sarima']
     
     # Security Check

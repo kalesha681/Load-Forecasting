@@ -15,8 +15,6 @@ def run_ldc_pipeline(data_path, output_dir):
     PLOT_PATH = output_dir / 'ldc_curve.png'
     METRICS_PATH = output_dir / 'ldc_metrics.csv'
     
-    METRICS_PATH = output_dir / 'ldc_metrics.csv'
-    
     # Security Check
     data_path = validate_path(data_path)
     output_dir = validate_path(output_dir)
