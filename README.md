@@ -94,14 +94,17 @@ Analyzing the LDC allows us to segment the demand into:
 ### 1. LSTM Forecast vs Actual
 Visual proof of the LSTM model's ability to track demand (Purple: Actual, Dashed: Forecast).
 ![LSTM Forecast](plots/LSTM/lstm_forecast.png)
+> ⚠️ Note: This plot is generated using the lightweight *sample dataset* for CI and reproducibility verification. Error values shown here are not representative of real-world model performance.
 
 ### 2. Peak Day Stress Test
 Forecasting the single highest demand day of the year.
 ![Peak Day Forecast](plots/Peak_Day/peak_day_forecast.png)
+> ⚠️ Note: This plot is generated using the lightweight *sample dataset* for CI and reproducibility verification. Error values shown here are not representative of real-world model performance.
 
 ### 3. Load Duration Curve (LDC)
 Illustrating the grid's capacity utilization.
 ![Load Duration Curve](plots/LDC/ldc_curve.png)
+> ⚠️ Note: This plot is generated using the lightweight *sample dataset* for CI and reproducibility verification. Error values shown here are not representative of real-world model performance.
 
 **Additional Insights**:
 - **Peak-Day Forecast Error**: ~2.0% (Indicates high reliability during stress events).
