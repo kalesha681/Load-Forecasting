@@ -1,4 +1,5 @@
 import numpy as np
+from .utils import validate_array_input
 
 try:
     from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error
@@ -15,11 +16,15 @@ def mean_absolute_percentage_error_np(y_true, y_pred):
     return mape
 
 def evaluate_mape(y_true, y_pred):
+    y_true = validate_array_input(y_true, "y_true")
+    y_pred = validate_array_input(y_pred, "y_pred")
     if SKLEARN_METRICS:
         return float(mean_absolute_percentage_error(y_true, y_pred))
     return float(mean_absolute_percentage_error_np(y_true, y_pred))
 
 def evaluate_rmse(y_true, y_pred):
+    y_true = validate_array_input(y_true, "y_true")
+    y_pred = validate_array_input(y_pred, "y_pred")
     if SKLEARN_METRICS:
         return float(np.sqrt(mean_squared_error(y_true, y_pred)))
     return float(np.sqrt(np.mean((y_true - y_pred)**2)))

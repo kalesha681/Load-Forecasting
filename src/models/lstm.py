@@ -11,6 +11,7 @@ import tensorflow as tf
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 # --- Safe Import for TensorFlow/Keras ---
+from typing import Tuple, Union, Optional
 try:
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
@@ -27,10 +28,11 @@ except ImportError:
         print("Warning: TensorFlow/Keras not found. LSTM will fail if run.")
 
 
-from ..config import ensure_output_dir, COL_DEMAND_YEARLY, PROCESSED_DATA_DIR
+from ..config import ensure_output_dir, COL_DEMAND_YEARLY, PROCESSED_DATA_DIR, MODEL_CONFIG, DATA_CONFIG
 from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
 from ..visualization import plot_time_series, plot_train_test_split, plot_forecast_vs_actual
+from ..utils import validate_path, validate_array_input
 
 def add_time_features(df):
     """Add hour, dayofweek, month, etc."""
@@ -40,12 +42,23 @@ def add_time_features(df):
     df['month'] = df.index.month
     return df
 
-def create_sequences(data, n_input=24):
+def create_sequences(data: np.ndarray, n_input: int = 24) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Vectorized sequence creation using stride_tricks.
-    data: 1D or 2D array [samples, features]
-    n_input: lookback window size
+    Create sliding window sequences for time series forecasting.
+
+    Uses NumPy stride tricks for efficient vectorized sequence generation.
+
+    Args:
+        data (np.ndarray): 1D or 2D array [samples, features].
+        n_input (int, optional): Lookback window size. Defaults to 24.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            X: Input sequences of shape (n_sequences, n_input, n_features).
+            y: Target values of shape (n_sequences, n_features).
     """
+    data = validate_array_input(data, "create_sequences input")
+    
     # ensure 2D [samples, features]
     if data.ndim == 1:
         data = data.reshape(-1, 1)
@@ -70,6 +83,11 @@ def create_sequences(data, n_input=24):
     # step to next time step = s0 (move down one row in original)
     # step to next feature = s1
     
+    # Safety check: Ensure valid memory layout before striding
+    if not data.flags['C_CONTIGUOUS']:
+        data = np.ascontiguousarray(data)
+        s0, s1 = data.strides
+
     X = np.lib.stride_tricks.as_strided(
         data,
         shape=(n_sequences, n_input, n_features),
@@ -85,8 +103,26 @@ def create_sequences(data, n_input=24):
 
 from pathlib import Path
 
-def run_lstm_pipeline(data_path, output_dir):
-    """Run LSTM pipeline."""
+def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path]) -> None:
+    """
+    Execute the full LSTM forecasting pipeline.
+
+    Steps:
+    1. Load and preprocess data.
+    2. Split into train/test sets.
+    3. Scale data using MinMaxScaler.
+    4. Create sliding window sequences.
+    5. Build and train LSTM model.
+    6. Generate predictions and evaluate performance (RMSE, MAPE).
+    7. Save metrics, plots, and the trained model.
+
+    Args:
+        data_path (Union[str, Path]): Path to the input CSV file.
+        output_dir (Union[str, Path]): Directory to save artifacts.
+
+    Raises:
+        ImportError: If TensorFlow is not installed.
+    """
     if not TF_AVAILABLE:
         print("ERROR: TensorFlow/Keras is not installed or failed to import.")
         print("Please ensure tensorflow is installed correctly.")
@@ -99,6 +135,12 @@ def run_lstm_pipeline(data_path, output_dir):
     METRICS_PATH = output_dir / 'metrics.csv'
     MODEL_OUT = output_dir / 'lstm_model.keras'
     
+    lstm_config = MODEL_CONFIG['lstm']
+    
+    # Security Check
+    data_path = validate_path(data_path)
+    output_dir = validate_path(output_dir)
+
     print(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     
@@ -110,14 +152,14 @@ def run_lstm_pipeline(data_path, output_dir):
     else:
         col = df.columns[0]
         
-    train, test = train_test_split(df, test_days=7)
+    train, test = train_test_split(df, test_days=DATA_CONFIG['test_days'])
     
     # Scaling
     scaler = MinMaxScaler()
     train_scaled = scaler.fit_transform(train[[col]])
     test_scaled = scaler.transform(test[[col]])
     
-    N_INPUT = 48
+    N_INPUT = lstm_config['n_input']
     X_train, y_train = create_sequences(train_scaled, n_input=N_INPUT)
     
     # For test, we need context
@@ -131,14 +173,14 @@ def run_lstm_pipeline(data_path, output_dir):
     # Model
     model = Sequential([
         Input(shape=(N_INPUT, 1)),
-        LSTM(64),
-        Dropout(0.2),
+        LSTM(lstm_config['units']),
+        Dropout(lstm_config['dropout']),
         Dense(1)
     ])
-    model.compile(optimizer='adam', loss='mse')
+    model.compile(optimizer=lstm_config['optimizer'], loss=lstm_config['loss'])
     
     # Train
-    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
+    model.fit(X_train, y_train, epochs=lstm_config['epochs'], batch_size=lstm_config['batch_size'], verbose=0)
     
     # Predict
     pred_scaled = model.predict(X_test, verbose=0)

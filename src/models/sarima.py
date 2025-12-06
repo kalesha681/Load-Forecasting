@@ -8,16 +8,31 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 import numpy as np
 from joblib import Parallel, delayed
 
-from ..config import ensure_output_dir, COL_DEMAND_YEARLY, SPLIT_DATE
+from ..config import ensure_output_dir, COL_DEMAND_YEARLY, SPLIT_DATE, MODEL_CONFIG, DATA_CONFIG
 from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
+from ..utils import validate_path
 
-def evaluate_candidate(order, seasonal_order, train_sub, val_sub, log_flag, seasonal_period):
+from typing import Tuple, Optional, Union
+import logging
+
+logger = logging.getLogger(__name__)
+
+def evaluate_candidate(order: Tuple[int, int, int], 
+                       seasonal_order: Tuple[int, int, int, int], 
+                       train_sub: pd.Series, 
+                       val_sub: pd.Series, 
+                       log_flag: bool, 
+                       seasonal_period: int) -> Optional[Tuple[Tuple[int, int, int], Tuple[int, int, int, int], float, bool]]:
+    """
+    Evaluate a single SARIMA configuration on validation set.
+    """
     try:
         y_train = np.log1p(train_sub) if log_flag else train_sub
         y_val = np.log1p(val_sub) if log_flag else val_sub
         
-        # Fast fit
+        # Fast fit checking
+        # enforce_stationarity=False, enforce_invertibility=False for speed/stability in candidates
         model = SARIMAX(y_train, order=order, seasonal_order=seasonal_order,
                         enforce_stationarity=False, enforce_invertibility=False)
         fit = model.fit(disp=False, maxiter=50, method='lbfgs')
@@ -32,14 +47,31 @@ def evaluate_candidate(order, seasonal_order, train_sub, val_sub, log_flag, seas
             
         if np.isfinite(mape):
             return (order, seasonal_order, mape, log_flag)
-    except Exception:
-        pass
+            
+    except Exception as e:
+        logger.debug(f"Candidate {order}x{seasonal_order} (Log={log_flag}) failed: {e}")
+        return None
+        
     return None
 
-def tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True):
-    """Fast candidate search using validation MAPE on recent history (Parallelized)."""
-    # Validation horizon: 7 days
-    horizon = 24 * 7
+def tune_sarima_by_mape(train_series: pd.Series, seasonal_period: int = 24, use_log: bool = True) -> Tuple[Tuple[int, int, int], Tuple[int, int, int, int], float, bool]:
+    """
+    Tune SARIMA hyperparameters by minimizing MAPE on a validation split.
+    
+    Uses parallel processing to evaluate candidates.
+
+    Args:
+        train_series (pd.Series): Time series data for training (index must be datetime).
+        seasonal_period (int): Periodicity of seasonality (e.g., 24 for hourly).
+        use_log (bool): Whether to test log-transformation.
+
+    Returns:
+        tuple: (best_order, best_seasonal_order, best_mape, use_log_flag)
+    """
+    sarima_config = MODEL_CONFIG['sarima']
+    
+    # Validation horizon
+    horizon = 24 * sarima_config['horizon_days']
     if len(train_series) <= horizon + 24:
         # Not enough data
         return (1, 1, 1), (1, 1, 1, seasonal_period), np.inf, False
@@ -52,8 +84,8 @@ def tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True):
         ((1,0,1), (0,1,1,seasonal_period)),
     ]
 
-    # Use last 3 months for tuning to speed up
-    tuning_window = 24 * 90 
+    # Use specific window for tuning to speed up
+    tuning_window = 24 * sarima_config['tuning_window_days']
     train_for_tuning = train_series.iloc[-tuning_window:] if len(train_series) > tuning_window else train_series
     
     # Split validation set
@@ -86,9 +118,21 @@ def tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True):
     return best
 
 
-def run_sarima_pipeline(data_path, output_dir):
+def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path]) -> None:
     """
-    Run SARIMA pipeline on specified data.
+    Execute the SARIMA forecasting pipeline.
+
+    Steps:
+    1. Load data.
+    2. Split train/test.
+    3. Auto-tune hyperparameters (Parallel Grid Search).
+    4. Fit model.
+    5. Forecast and Evaluate.
+    6. Save metrics and plots.
+
+    Args:
+        data_path (Union[str, Path]): Path to input CSV.
+        output_dir (Union[str, Path]): Directory to save artifacts.
     """
     output_dir = Path(output_dir) / 'SARIMA'
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,6 +141,14 @@ def run_sarima_pipeline(data_path, output_dir):
     PLOT2_PATH = output_dir / "sarima_vs_actual.png"
     METRICS_PATH = output_dir / "metrics.csv"
     
+    METRICS_PATH = output_dir / "metrics.csv"
+    
+    sarima_config = MODEL_CONFIG['sarima']
+    
+    # Security Check
+    data_path = validate_path(data_path)
+    output_dir = validate_path(output_dir)
+
     print(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     
@@ -107,9 +159,9 @@ def run_sarima_pipeline(data_path, output_dir):
         col = "Demand_MW"
     else:
         col = df.columns[0]
-
+        
     # Train/Test Split
-    train, test = train_test_split(df, test_days=7)
+    train, test = train_test_split(df, test_days=DATA_CONFIG['test_days'])
     train_series = train[col]
     test_series = test[col]
 
@@ -118,7 +170,7 @@ def run_sarima_pipeline(data_path, output_dir):
     # Auto-tune
     print("Tuning SARIMA...")
     best_order, best_seasonal_order, val_mape, use_log = tune_sarima_by_mape(
-        train_series, seasonal_period=24, use_log=True
+        train_series, seasonal_period=sarima_config['seasonal_period'], use_log=True
     )
     print(f"Best: Order={best_order}, Seasonal={best_seasonal_order}, Log={use_log}")
 
@@ -126,12 +178,18 @@ def run_sarima_pipeline(data_path, output_dir):
     y_train = np.log1p(train_series) if use_log else train_series
     model = SARIMAX(y_train, order=best_order, seasonal_order=best_seasonal_order,
                     enforce_stationarity=False, enforce_invertibility=False)
-    fit = model.fit(disp=False, maxiter=50, method='lbfgs')
+    fit = model.fit(disp=False, maxiter=sarima_config['max_iter'], method=sarima_config['method'])
     
     # Forecast
     pred_trans = fit.forecast(steps=len(test))
+    
+    # Ensure it's a Series (statsmodels usually returns Series, but safety check)
+    if isinstance(pred_trans, np.ndarray):
+        pred_trans = pd.Series(pred_trans, index=test.index)
+    else:
+        pred_trans.index = test.index # Ensure alignment
+        
     forecast = np.expm1(pred_trans) if use_log else pred_trans
-    forecast.index = test.index
     
     # Evaluate
     rmse = evaluate_rmse(test_series.values, forecast.values)

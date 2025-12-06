@@ -19,9 +19,35 @@ if not os.path.exists(PROCESSED_DATA_DIR):
 OUTPUT_ROOT = os.path.join(BASE_DIR, 'plots')
 
 # Data Settings
-# Data Settings
-SPLIT_DATE = '2024-10-01' # Approximate split for 1 year data (last quarter as test) or use ratio
+SPLIT_DATE = '2024-10-01' # Approximate split for 1 year data
 SEED = 42
+
+# Data Configuration
+DATA_CONFIG = {
+    'test_days': 7,
+    'split_ratio': 0.8,  # Fallback for small data
+    'interpolation_method': 'time'
+}
+
+# Model Configuration
+MODEL_CONFIG = {
+    'lstm': {
+        'n_input': 48,
+        'epochs': 20,
+        'batch_size': 32,
+        'units': 64,       # First LSTM layer units
+        'dropout': 0.2,
+        'optimizer': 'adam',
+        'loss': 'mse'
+    },
+    'sarima': {
+        'seasonal_period': 24,
+        'tuning_window_days': 90,
+        'max_iter': 50,
+        'method': 'lbfgs',
+        'horizon_days': 7
+    }
+}
 
 # Column Constants
 # Yearly
