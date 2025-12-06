@@ -62,6 +62,7 @@ class TestDataLoader:
         df = pd.DataFrame({'data': range(10)})
         train, test = train_test_split(df, test_days=2) # 48
         
-        # split_idx = 10 - 48 = -38 -> 0
-        assert len(train) == 0
-        assert len(test) == 10
+        # New logic: Fallback to 80/20 split
+        # 10 * 0.8 = 8
+        assert len(train) == 8
+        assert len(test) == 2

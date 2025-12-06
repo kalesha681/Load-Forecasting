@@ -165,9 +165,24 @@ def ensure_dir(file_path):
 
 # --- Legacy/Shared ---
 def train_test_split(df, test_days=7):
-    """Split data into train and test sets."""
+    """
+    Split data into train and test sets.
+    Adaptive: Uses test_days for large data, but falls back to 80/20 split
+    for small datasets (like sample mode) to ensure training data exists.
+    """
+    # Standard split
     split_idx = len(df) - (test_days * 24)
-    if split_idx < 0: split_idx = 0
+    
+    # Validation for small datasets
+    if split_idx < 1: 
+        logger.warning(f"Dataset too small ({len(df)} rows) for {test_days} day test split.")
+        logger.warning("Switching to 80/20 percentage split.")
+        split_idx = int(len(df) * 0.8)
+    
+    # Ensure at least 1 training sample
+    if split_idx < 1 and len(df) > 1:
+        split_idx = 1
+        
     train = df.iloc[:split_idx].copy()
     test = df.iloc[split_idx:].copy()
     return train, test
