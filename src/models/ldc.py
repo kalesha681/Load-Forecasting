@@ -7,6 +7,9 @@ from ..utils import validate_path
 
 
 from pathlib import Path
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
 
 def run_ldc_pipeline(data_path, output_dir):
     """Run LDC Pipeline."""
@@ -21,7 +24,7 @@ def run_ldc_pipeline(data_path, output_dir):
     data_path = validate_path(data_path)
     output_dir = validate_path(output_dir)
 
-    print(f"Loading {data_path}...")
+    logger.info("loading_data", path=str(data_path))
     df = pd.read_csv(data_path)
     
     # Assume cols: Percent_Time, Load_Percent_of_Peak (or similar)
@@ -42,7 +45,7 @@ def run_ldc_pipeline(data_path, output_dir):
     base_load = y.iloc[-1]
     peak_load = y.iloc[0]
     
-    print(f"Base Load: {base_load}%, Peak: {peak_load}%")
+    logger.info("ldc_metrics", base_load_pct=base_load, peak_load_pct=peak_load)
     
     pd.DataFrame([{'Base %': base_load, 'Peak %': peak_load}]).to_csv(METRICS_PATH, index=False)
     
@@ -54,7 +57,7 @@ def run_ldc_pipeline(data_path, output_dir):
     plt.title("Load Duration Curve")
     plt.savefig(PLOT_PATH)
     plt.close()
-    print(f"Saved LDC to {output_dir}")
+    logger.info("artifacts_saved", dir=str(output_dir))
 
 def run_ldc_analysis(): pass
 

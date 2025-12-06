@@ -10,6 +10,9 @@ from ..utils import validate_path
 
 
 from pathlib import Path
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
 
 def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     """Run Peak Day Analysis Pipeline."""
@@ -25,14 +28,14 @@ def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     peak_path = validate_path(peak_path)
     output_dir = validate_path(output_dir)
 
-    print(f"Loading yearly: {yearly_path}")
+    logger.info("loading_yearly", path=str(yearly_path))
     yearly_df = pd.read_csv(yearly_path, index_col=0, parse_dates=True)
     
-    print(f"Loading peak: {peak_path}")
+    logger.info("loading_peak", path=str(peak_path))
     peak_df = pd.read_csv(peak_path, index_col=0, parse_dates=True)
     
     if peak_df.empty:
-        print("Peak data empty.")
+        logger.warning("peak_data_empty")
         return
 
     peak_date = peak_df.index[0].date()
@@ -41,7 +44,7 @@ def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     # Train on data before peak date
     train_df = yearly_df[yearly_df.index.date < peak_date]
     if train_df.empty:
-        print("No training data before peak day.")
+        logger.warning("insufficient_training_data", reason="no_data_before_peak_day")
         return
 
     y_train = train_df.iloc[:, 0]
@@ -60,7 +63,7 @@ def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     pred_peak = forecast.max()
     error_pct = ((pred_peak - actual_peak) / actual_peak) * 100
     
-    print(f"Peak Error: {error_pct:.2f}% (Pred: {pred_peak:.0f}, Actual: {actual_peak:.0f})")
+    logger.info("peak_day_result", error_pct=error_pct, pred_peak=pred_peak, actual_peak=actual_peak)
     
     # Save
     pd.DataFrame([{
@@ -76,6 +79,7 @@ def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     plt.savefig(PLOT_PATH)
     plt.close()
     print(f"Saved artifacts to {output_dir}")
+    logger.info("artifacts_saved", dir=str(output_dir))
 
 def run_peak_day_analysis(): pass
 

@@ -15,8 +15,9 @@ from ..utils import validate_path
 
 from typing import Tuple, Optional, Union
 import logging
+from ..logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def evaluate_candidate(order: Tuple[int, int, int], 
                        seasonal_order: Tuple[int, int, int, int], 
@@ -49,7 +50,7 @@ def evaluate_candidate(order: Tuple[int, int, int],
             return (order, seasonal_order, mape, log_flag)
             
     except Exception as e:
-        logger.debug(f"Candidate {order}x{seasonal_order} (Log={log_flag}) failed: {e}")
+        logger.debug("candidate_failed", order=str(order), seasonal=str(seasonal_order), log=log_flag, error=str(e))
         return None
         
     return None
@@ -102,7 +103,8 @@ def tune_sarima_by_mape(train_series: pd.Series, seasonal_period: int = 24, use_
                 tasks.append((order, seasonal_order, log_flag))
                 seen.add((order, seasonal_order, log_flag))
             
-    print(f"Parallel tuning on {len(tasks)} candidates...")
+            
+    logger.info("tuning_started", n_candidates=len(tasks))
     results = Parallel(n_jobs=-1)(
         delayed(evaluate_candidate)(order, seasonal_order, train_sub, val_sub, log_flag, seasonal_period)
         for order, seasonal_order, log_flag in tasks
@@ -146,10 +148,11 @@ def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path
     sarima_config = MODEL_CONFIG['sarima']
     
     # Security Check
+    # Security Check
     data_path = validate_path(data_path)
     output_dir = validate_path(output_dir)
 
-    print(f"Loading data from {data_path}...")
+    logger.info("loading_data", path=str(data_path))
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     
     # Identify column
@@ -165,14 +168,14 @@ def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path
     train_series = train[col]
     test_series = test[col]
 
-    print(f"Training window: {train.index.min()} -- {train.index.max()} ({len(train)} hrs)")
+    logger.info("training_window", start=str(train.index.min()), end=str(train.index.max()), hours=len(train))
 
     # Auto-tune
-    print("Tuning SARIMA...")
+    logger.info("tuning_sarima")
     best_order, best_seasonal_order, val_mape, use_log = tune_sarima_by_mape(
         train_series, seasonal_period=sarima_config['seasonal_period'], use_log=True
     )
-    print(f"Best: Order={best_order}, Seasonal={best_seasonal_order}, Log={use_log}")
+    logger.info("tuning_completed", best_order=str(best_order), seasonal=str(best_seasonal_order), log=use_log)
 
     # Fit
     y_train = np.log1p(train_series) if use_log else train_series
@@ -195,7 +198,10 @@ def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path
     rmse = evaluate_rmse(test_series.values, forecast.values)
     mape = evaluate_mape(test_series.values, forecast.values)
     
-    print(f"SARIMA Results: RMSE={rmse:.2f}, MAPE={mape*100:.2f}%")
+    rmse = evaluate_rmse(test_series.values, forecast.values)
+    mape = evaluate_mape(test_series.values, forecast.values)
+    
+    logger.info("model_evaluation", rmse=rmse, mape=mape)
     
     # Save
     pd.DataFrame([{
@@ -212,7 +218,9 @@ def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path
     plt.legend()
     plt.savefig(PLOT1_PATH)
     plt.close()
-    print(f"Saved artifacts to {output_dir}")
+    plt.savefig(PLOT1_PATH)
+    plt.close()
+    logger.info("artifacts_saved", dir=str(output_dir))
 
 # Alias for legacy or direct calling if needed
 def run_sarima(data_path=None, test_days=7):

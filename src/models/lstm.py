@@ -25,6 +25,8 @@ except ImportError:
         TF_AVAILABLE = True
     except ImportError:
         TF_AVAILABLE = False
+        # We can't use logger yet as it's not imported/init at this module level block easily due to order
+        # But we can defer or just print. We'll leave print or import logger inside.
         print("Warning: TensorFlow/Keras not found. LSTM will fail if run.")
 
 
@@ -33,6 +35,9 @@ from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
 from ..visualization import plot_time_series, plot_train_test_split, plot_forecast_vs_actual
 from ..utils import validate_path, validate_array_input
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
 
 def add_time_features(df):
     """Add hour, dayofweek, month, etc."""
@@ -124,8 +129,7 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
         ImportError: If TensorFlow is not installed.
     """
     if not TF_AVAILABLE:
-        print("ERROR: TensorFlow/Keras is not installed or failed to import.")
-        print("Please ensure tensorflow is installed correctly.")
+        logger.error("tensorflow_missing", instructions="Please ensure tensorflow is installed correctly.")
         raise ImportError("TensorFlow not available")
 
     output_dir = Path(output_dir) / 'LSTM'
@@ -141,7 +145,7 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     data_path = validate_path(data_path)
     output_dir = validate_path(output_dir)
 
-    print(f"Loading data from {data_path}...")
+    logger.info("loading_data", path=str(data_path))
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     
     # Identify column
@@ -167,7 +171,7 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     X_test, y_test = create_sequences(concat_test, n_input=N_INPUT)
     
     if len(X_train) == 0:
-        print("Not enough data for LSTM training.")
+        logger.warning("insufficient_data_for_lstm")
         return
 
     # Model
@@ -191,7 +195,9 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     mape = evaluate_mape(y_true, y_pred)
     rmse = evaluate_rmse(y_true, y_pred)
     
-    print(f"LSTM Results: RMSE={rmse:.2f}, MAPE={mape*100:.2f}%")
+    rmse = evaluate_rmse(y_true, y_pred)
+    
+    logger.info("model_evaluation", rmse=rmse, mape=mape)
     
     # Save
     pd.DataFrame([{'Model': 'LSTM', 'RMSE': rmse, 'MAPE': mape}]).to_csv(METRICS_PATH, index=False)
@@ -206,7 +212,8 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     plt.close()
     
     model.save(MODEL_OUT)
-    print(f"Saved artifacts to {output_dir}")
+    model.save(MODEL_OUT)
+    logger.info("artifacts_saved", dir=str(output_dir))
 
 def run_lstm(): pass
 

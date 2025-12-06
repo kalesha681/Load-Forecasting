@@ -4,10 +4,10 @@ import pandas as pd
 import numpy as np
 import logging
 from pathlib import Path
+from .logging_config import get_logger
 
 # Configure Logger
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = get_logger(__name__)
 
 from typing import List, Tuple, Union, Optional
 from .config import (
@@ -32,7 +32,7 @@ def validate_schema(df: pd.DataFrame, required_columns: List[str], filename: str
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         msg = f"Schema Mismatch in {filename}: Missing columns {missing}. Found {df.columns.tolist()}"
-        logger.error(msg)
+        logger.error("schema_mismatch", filename=filename, missing=missing, found=df.columns.tolist())
         raise ValueError(msg)
 
 def parse_yearly_datetime(year_col: pd.Series, date_col: pd.Series) -> pd.Series:
@@ -60,12 +60,12 @@ def parse_yearly_datetime(year_col: pd.Series, date_col: pd.Series) -> pd.Series
         # Expected format: "2024 01-JAN 12AM"
         return pd.to_datetime(full_str, format='%Y %d-%b %I%p', errors='raise')
     except ValueError as e:
-        logger.warning(f"Primary parsing failed: {e}. Attempting robust fallback (dayfirst=True).")
+        logger.warning("primary_parsing_failed", error=str(e), fallback="dayfirst=True")
         try:
              # Fallback strictly without 'mixed'
             return pd.to_datetime(full_str, dayfirst=True, errors='raise')
         except Exception as e2:
-             logger.error(f"Datetime parsing failed completely for some rows. Error: {e2}")
+             logger.error("datetime_parsing_failed", error=str(e2))
              raise e2
 
 def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Path]) -> None:
@@ -86,10 +86,10 @@ def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Pa
     
     input_path = str(input_path)
     output_path = str(output_path)
-    logger.info(f"Loading yearly data from {input_path}")
+    logger.info("loading_yearly_data", path=input_path)
     
     if not os.path.exists(input_path):
-        logger.error(f"File not found: {input_path}")
+        logger.error("file_not_found", path=input_path)
         raise FileNotFoundError(f"File not found: {input_path}")
 
     if input_path.endswith('.csv'):
@@ -101,7 +101,7 @@ def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Pa
     required = ["Datetime", "Demand_MW"] if "Datetime" in df.columns else [COL_YEAR, COL_DATE_YEARLY, COL_DEMAND_YEARLY]
     # If sample data with clean columns, skip complex parsing
     if "Datetime" in df.columns and "Demand_MW" in df.columns:
-         logger.info("Detected sample/clean format. Skipping complex parsing.")
+         logger.info("sample_format_detected", action="skipping_complex_parsing")
          df['Datetime'] = pd.to_datetime(df['Datetime'])
          col_name = "Demand_MW"
     else:
@@ -115,7 +115,8 @@ def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Pa
     
     # Duplicates
     if df.index.duplicated().any():
-        logger.warning(f"Found {df.index.duplicated().sum()} duplicate timestamps. Keeping first.")
+        count = df.index.duplicated().sum()
+        logger.warning("duplicate_timestamps", count=count, action="keeping_first")
         df = df[~df.index.duplicated(keep='first')]
     
     # Hourly Continuity
@@ -128,13 +129,13 @@ def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Pa
     # Interpolation
     if df[col_name].isna().any():
         missing_count = df[col_name].isna().sum()
-        logger.info(f"Interpolating {missing_count} missing hours...")
+        logger.info("interpolating_missing_hours", count=missing_count)
         df[col_name] = df[col_name].interpolate(method='time').bfill().ffill()
         
     # Save
     ensure_dir(output_path)
     df[[col_name]].to_csv(output_path)
-    logger.info(f"Saved processed yearly data to {output_path}")
+    logger.info("saved_processed_data", type="yearly", path=output_path)
 
 def process_peak_day_data(input_path: Union[str, Path], output_path: Union[str, Path]) -> None:
     """
@@ -154,7 +155,7 @@ def process_peak_day_data(input_path: Union[str, Path], output_path: Union[str, 
     
     input_path = str(input_path)
     output_path = str(output_path)
-    logger.info(f"Loading peak day data from {input_path}")
+    logger.info("loading_peak_day_data", path=input_path)
 
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"File not found: {input_path}")
@@ -166,7 +167,7 @@ def process_peak_day_data(input_path: Union[str, Path], output_path: Union[str, 
 
     # Sample data check
     if "Datetime" in df.columns and "Hourly_Demand_MW" in df.columns:
-        logger.info("Detected sample/clean peak day format.")
+        logger.info("sample_format_detected", type="peak_day")
         df['Datetime'] = pd.to_datetime(df['Datetime'])
         col_name = "Hourly_Demand_MW"
     else:
@@ -184,7 +185,7 @@ def process_peak_day_data(input_path: Union[str, Path], output_path: Union[str, 
     
     ensure_dir(output_path)
     df[[col_name]].to_csv(output_path)
-    logger.info(f"Saved processed peak day data to {output_path}")
+    logger.info("saved_processed_data", type="peak_day", path=output_path)
 
 def process_ldc_data(input_path: Union[str, Path], output_path: Union[str, Path]) -> None:
     """
@@ -204,7 +205,7 @@ def process_ldc_data(input_path: Union[str, Path], output_path: Union[str, Path]
     
     input_path = str(input_path)
     output_path = str(output_path)
-    logger.info(f"Loading LDC data from {input_path}")
+    logger.info("loading_ldc_data", path=input_path)
     
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"File not found: {input_path}")
@@ -221,7 +222,7 @@ def process_ldc_data(input_path: Union[str, Path], output_path: Union[str, Path]
     # We will just pass it through if it looks reasonably tabular
     ensure_dir(output_path)
     df.to_csv(output_path, index=False)
-    logger.info(f"Saved processed LDC data to {output_path}")
+    logger.info("saved_processed_data", type="ldc", path=output_path)
 
 def ensure_dir(file_path: Union[str, Path]) -> None:
     """Ensure the directory for the given file path exists."""
@@ -249,8 +250,7 @@ def train_test_split(df: pd.DataFrame, test_days: int = 7) -> Tuple[pd.DataFrame
     
     # Validation for small datasets
     if split_idx < 1: 
-        logger.warning(f"Dataset too small ({len(df)} rows) for {test_days} day test split.")
-        logger.warning("Switching to 80/20 percentage split.")
+        logger.warning("dataset_too_small_for_split", rows=len(df), test_days=test_days, fallback="80/20")
         split_idx = int(len(df) * 0.8)
     
     # Ensure at least 1 training sample

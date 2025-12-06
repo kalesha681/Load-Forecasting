@@ -4,15 +4,12 @@ import sys
 import logging
 from pathlib import Path
 
+from src.logging_config import configure_logging, get_logger
+
 # --- Configure Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+# Default to Console (non-JSON) for local running ease
+configure_logging(level="INFO", json_format=False)
+logger = get_logger(__name__)
 
 # --- Ensure src is on PYTHONPATH ---
 ROOT = Path(__file__).resolve().parent
