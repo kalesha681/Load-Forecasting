@@ -9,24 +9,44 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+from typing import List, Tuple, Union, Optional
 from .config import (
     COL_YEAR, COL_DATE_YEARLY, COL_DEMAND_YEARLY,
     COL_REGION_DAILY, COL_DATE_DAILY, COL_HOUR_DAILY, COL_DEMAND_DAILY,
     COL_REGION_LDC, COL_PEAK_PCT_LDC, COL_TIME_PCT_LDC
 )
 
-def validate_schema(df, required_columns, filename):
-    """Strict schema validation."""
+def validate_schema(df: pd.DataFrame, required_columns: List[str], filename: str) -> None:
+    """
+    Validate that the DataFrame contains the required columns.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to check.
+        required_columns (List[str]): List of column names that must exist.
+        filename (str): Name of the file (for error logging).
+
+    Raises:
+        ValueError: If any required column is missing.
+    """
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
         msg = f"Schema Mismatch in {filename}: Missing columns {missing}. Found {df.columns.tolist()}"
         logger.error(msg)
         raise ValueError(msg)
 
-def parse_yearly_datetime(year_col, date_col):
+def parse_yearly_datetime(year_col: pd.Series, date_col: pd.Series) -> pd.Series:
     """
-    Parse datetime from Year and Date columns.
-    Enforces robust parsing.
+    Parse datetime from Year and Date columns with robust error handling.
+
+    Args:
+        year_col (pd.Series): Series containing year values (e.g., 2024).
+        date_col (pd.Series): Series containing date/time strings (e.g., "01-JAN 12AM").
+
+    Returns:
+        pd.Series: A Series of parsed datetime objects.
+
+    Raises:
+        Exception: If parsing fails after fallback attempts.
     """
     # Combine Year and Date
     full_str = year_col.astype(str) + ' ' + date_col.astype(str).str.strip()
@@ -47,8 +67,18 @@ def parse_yearly_datetime(year_col, date_col):
              logger.error(f"Datetime parsing failed completely for some rows. Error: {e2}")
              raise e2
 
-def process_yearly_data(input_path, output_path):
-    """Process Yearly Hourly Demand Data."""
+def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Path]) -> None:
+    """
+    Load, validate, clean, and process the Yearly Hourly Demand dataset.
+
+    Args:
+        input_path (Union[str, Path]): Path to the raw Excel/CSV file.
+        output_path (Union[str, Path]): Path where the processed CSV will be saved.
+
+    Raises:
+        FileNotFoundError: If input file does not exist.
+        ValueError: If schema validation fails.
+    """
     input_path = str(input_path)
     output_path = str(output_path)
     logger.info(f"Loading yearly data from {input_path}")
@@ -101,8 +131,17 @@ def process_yearly_data(input_path, output_path):
     df[[col_name]].to_csv(output_path)
     logger.info(f"Saved processed yearly data to {output_path}")
 
-def process_peak_day_data(input_path, output_path):
-    """Process Peak Day Hourly Demand Data."""
+def process_peak_day_data(input_path: Union[str, Path], output_path: Union[str, Path]) -> None:
+    """
+    Load and process the Peak Day Hourly Demand dataset.
+
+    Args:
+        input_path (Union[str, Path]): Path to the raw input file.
+        output_path (Union[str, Path]): Path where the processed CSV will be saved.
+    
+    Raises:
+        FileNotFoundError: If input file does not exist.
+    """
     input_path = str(input_path)
     output_path = str(output_path)
     logger.info(f"Loading peak day data from {input_path}")
@@ -137,8 +176,17 @@ def process_peak_day_data(input_path, output_path):
     df[[col_name]].to_csv(output_path)
     logger.info(f"Saved processed peak day data to {output_path}")
 
-def process_ldc_data(input_path, output_path):
-    """Process Load Duration Curve Data."""
+def process_ldc_data(input_path: Union[str, Path], output_path: Union[str, Path]) -> None:
+    """
+    Load and process the Load Duration Curve (LDC) dataset.
+
+    Args:
+        input_path (Union[str, Path]): Path to the raw input file.
+        output_path (Union[str, Path]): Path where the processed CSV will be saved.
+
+    Raises:
+        FileNotFoundError: If input file does not exist.
+    """
     input_path = str(input_path)
     output_path = str(output_path)
     logger.info(f"Loading LDC data from {input_path}")
@@ -160,15 +208,26 @@ def process_ldc_data(input_path, output_path):
     df.to_csv(output_path, index=False)
     logger.info(f"Saved processed LDC data to {output_path}")
 
-def ensure_dir(file_path):
+def ensure_dir(file_path: Union[str, Path]) -> None:
+    """Ensure the directory for the given file path exists."""
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
 # --- Legacy/Shared ---
-def train_test_split(df, test_days=7):
+def train_test_split(df: pd.DataFrame, test_days: int = 7) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Split data into train and test sets.
-    Adaptive: Uses test_days for large data, but falls back to 80/20 split
-    for small datasets (like sample mode) to ensure training data exists.
+    Split time series data into training and test sets.
+
+    Adaptive Strategy:
+    - Uses a fixed `test_days` window for large datasets.
+    - Falls back to an 80/20 percentage split for small datasets (e.g., sample data)
+      to ensure the training set is not empty.
+
+    Args:
+        df (pd.DataFrame): The input dataframe (must be time-indexed).
+        test_days (int, optional): Number of days to use for testing. Defaults to 7.
+
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: (train_df, test_df)
     """
     # Standard split
     split_idx = len(df) - (test_days * 24)

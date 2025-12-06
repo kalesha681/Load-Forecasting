@@ -11,6 +11,7 @@ import tensorflow as tf
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 # --- Safe Import for TensorFlow/Keras ---
+from typing import Tuple, Union, Optional
 try:
     from tensorflow.keras.models import Sequential
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Input
@@ -40,11 +41,20 @@ def add_time_features(df):
     df['month'] = df.index.month
     return df
 
-def create_sequences(data, n_input=24):
+def create_sequences(data: np.ndarray, n_input: int = 24) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Vectorized sequence creation using stride_tricks.
-    data: 1D or 2D array [samples, features]
-    n_input: lookback window size
+    Create sliding window sequences for time series forecasting.
+
+    Uses NumPy stride tricks for efficient vectorized sequence generation.
+
+    Args:
+        data (np.ndarray): 1D or 2D array [samples, features].
+        n_input (int, optional): Lookback window size. Defaults to 24.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            X: Input sequences of shape (n_sequences, n_input, n_features).
+            y: Target values of shape (n_sequences, n_features).
     """
     # ensure 2D [samples, features]
     if data.ndim == 1:
@@ -70,6 +80,11 @@ def create_sequences(data, n_input=24):
     # step to next time step = s0 (move down one row in original)
     # step to next feature = s1
     
+    # Safety check: Ensure valid memory layout before striding
+    if not data.flags['C_CONTIGUOUS']:
+        data = np.ascontiguousarray(data)
+        s0, s1 = data.strides
+
     X = np.lib.stride_tricks.as_strided(
         data,
         shape=(n_sequences, n_input, n_features),
@@ -85,8 +100,26 @@ def create_sequences(data, n_input=24):
 
 from pathlib import Path
 
-def run_lstm_pipeline(data_path, output_dir):
-    """Run LSTM pipeline."""
+def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path]) -> None:
+    """
+    Execute the full LSTM forecasting pipeline.
+
+    Steps:
+    1. Load and preprocess data.
+    2. Split into train/test sets.
+    3. Scale data using MinMaxScaler.
+    4. Create sliding window sequences.
+    5. Build and train LSTM model.
+    6. Generate predictions and evaluate performance (RMSE, MAPE).
+    7. Save metrics, plots, and the trained model.
+
+    Args:
+        data_path (Union[str, Path]): Path to the input CSV file.
+        output_dir (Union[str, Path]): Directory to save artifacts.
+
+    Raises:
+        ImportError: If TensorFlow is not installed.
+    """
     if not TF_AVAILABLE:
         print("ERROR: TensorFlow/Keras is not installed or failed to import.")
         print("Please ensure tensorflow is installed correctly.")
