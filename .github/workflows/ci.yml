@@ -30,4 +30,4 @@ jobs:
     - name: Run Tests
       run: |
         # logic to run pytest only if tests directory exists
-        if [ -d "tests" ]; then pytest tests/; else echo "No tests folder found, skipping pytest"; fi
+        if [ -d "tests" ]; then python -m pytest tests/; else echo "No tests folder found, skipping pytest"; fi
