@@ -50,22 +50,22 @@ args = parser.parse_args()
 # -------------------------------------------------------------------
 if args.sample:
     logger.info("Running in SAMPLE mode")
-    YEARLY_RAW = ROOT / "data/sample/yearly_sample.csv"
-    PEAK_RAW   = ROOT / "data/sample/peak_day_sample.csv"
-    LDC_RAW    = ROOT / "data/sample/ldc_sample.csv"
+    YEARLY_RAW = ROOT / "data/Sample/yearly_sample.csv"
+    PEAK_RAW   = ROOT / "data/Sample/peak_day_sample.csv"
+    LDC_RAW    = ROOT / "data/Sample/ldc_sample.csv"
 
-    YEARLY_OUT = ROOT / "data/sample/yearly_sample_processed.csv"
-    PEAK_OUT   = ROOT / "data/sample/peak_sample_processed.csv"
-    LDC_OUT    = ROOT / "data/sample/ldc_sample_processed.csv"
+    YEARLY_OUT = ROOT / "data/Sample/yearly_sample_processed.csv"
+    PEAK_OUT   = ROOT / "data/Sample/peak_sample_processed.csv"
+    LDC_OUT    = ROOT / "data/Sample/ldc_sample_processed.csv"
 
 else:
-    YEARLY_RAW = ROOT / "data/raw/yearly_hourly_demand_2024.xlsx"
-    PEAK_RAW   = ROOT / "data/raw/peak_day_hourly_demand.xlsx"
-    LDC_RAW    = ROOT / "data/raw/load_duration_curve.xlsx"
+    YEARLY_RAW = ROOT / "data/Raw/yearly_hourly_demand_2024.xlsx"
+    PEAK_RAW   = ROOT / "data/Raw/peak_day_hourly_demand.xlsx"
+    LDC_RAW    = ROOT / "data/Raw/load_duration_curve.xlsx"
 
-    YEARLY_OUT = ROOT / "data/processed/yearly_demand_National.csv"
-    PEAK_OUT   = ROOT / "data/processed/peak_day_National.csv"
-    LDC_OUT    = ROOT / "data/processed/ldc_data.csv"
+    YEARLY_OUT = ROOT / "data/Processed/yearly_demand_National.csv"
+    PEAK_OUT   = ROOT / "data/Processed/peak_day_National.csv"
+    LDC_OUT    = ROOT / "data/Processed/ldc_data.csv"
 
 
 PLOTS_DIR = ROOT / "plots"
