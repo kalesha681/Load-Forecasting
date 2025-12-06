@@ -35,6 +35,7 @@ class TestMetrics:
         rmse = evaluate_rmse(y_true, y_pred)
         assert rmse == 0.0
 
+
     def test_evaluate_rmse_simple(self):
         """Test RMSE calculation."""
         # Errors: 1, -1. Squared: 1, 1. Mean: 1. Sqrt: 1.
@@ -42,3 +43,17 @@ class TestMetrics:
         y_pred = np.array([11, 19])
         rmse = evaluate_rmse(y_true, y_pred)
         assert rmse == 1.0
+
+    def test_input_validation(self):
+        """Test validaton logic in metrics."""
+        # None input
+        with pytest.raises(ValueError, match="cannot be None"):
+            evaluate_rmse(None, [1, 2])
+            
+        # Empty input
+        with pytest.raises(ValueError, match="cannot be empty"):
+            evaluate_rmse([], [])
+            
+        # Length mismatch (handled by sklearn or array operations usually, but our validation might catch length=0)
+        # Our validate_array_input just checks emptiness/None.
+        pass

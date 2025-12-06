@@ -11,6 +11,7 @@ from joblib import Parallel, delayed
 from ..config import ensure_output_dir, COL_DEMAND_YEARLY, SPLIT_DATE, MODEL_CONFIG, DATA_CONFIG
 from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
+from ..utils import validate_path
 
 from typing import Tuple, Optional, Union
 import logging
@@ -140,8 +141,14 @@ def run_sarima_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path
     PLOT2_PATH = output_dir / "sarima_vs_actual.png"
     METRICS_PATH = output_dir / "metrics.csv"
     
+    METRICS_PATH = output_dir / "metrics.csv"
+    
     sarima_config = MODEL_CONFIG['sarima']
     
+    # Security Check
+    data_path = validate_path(data_path)
+    output_dir = validate_path(output_dir)
+
     print(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     

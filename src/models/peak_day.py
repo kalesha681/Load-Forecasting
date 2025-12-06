@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import os
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from ..config import ensure_output_dir, PROCESSED_DATA_DIR
+from ..utils import validate_path
 
 
 
@@ -16,6 +17,13 @@ def run_peak_day_pipeline(yearly_path, peak_path, output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
     PLOT_PATH = output_dir / 'peak_day_forecast.png'
     METRICS_PATH = output_dir / 'metrics.csv'
+
+    METRICS_PATH = output_dir / 'metrics.csv'
+    
+    # Security Check
+    yearly_path = validate_path(yearly_path)
+    peak_path = validate_path(peak_path)
+    output_dir = validate_path(output_dir)
 
     print(f"Loading yearly: {yearly_path}")
     yearly_df = pd.read_csv(yearly_path, index_col=0, parse_dates=True)

@@ -32,6 +32,7 @@ from ..config import ensure_output_dir, COL_DEMAND_YEARLY, PROCESSED_DATA_DIR, M
 from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
 from ..visualization import plot_time_series, plot_train_test_split, plot_forecast_vs_actual
+from ..utils import validate_path, validate_array_input
 
 def add_time_features(df):
     """Add hour, dayofweek, month, etc."""
@@ -56,6 +57,8 @@ def create_sequences(data: np.ndarray, n_input: int = 24) -> Tuple[np.ndarray, n
             X: Input sequences of shape (n_sequences, n_input, n_features).
             y: Target values of shape (n_sequences, n_features).
     """
+    data = validate_array_input(data, "create_sequences input")
+    
     # ensure 2D [samples, features]
     if data.ndim == 1:
         data = data.reshape(-1, 1)
@@ -134,6 +137,10 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     
     lstm_config = MODEL_CONFIG['lstm']
     
+    # Security Check
+    data_path = validate_path(data_path)
+    output_dir = validate_path(output_dir)
+
     print(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     

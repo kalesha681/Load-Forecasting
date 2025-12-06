@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 from ..config import ensure_output_dir, PROCESSED_DATA_DIR, COL_REGION_LDC, COL_PEAK_PCT_LDC, COL_TIME_PCT_LDC
+from ..utils import validate_path
 
 
 from pathlib import Path
@@ -14,6 +15,12 @@ def run_ldc_pipeline(data_path, output_dir):
     PLOT_PATH = output_dir / 'ldc_curve.png'
     METRICS_PATH = output_dir / 'ldc_metrics.csv'
     
+    METRICS_PATH = output_dir / 'ldc_metrics.csv'
+    
+    # Security Check
+    data_path = validate_path(data_path)
+    output_dir = validate_path(output_dir)
+
     print(f"Loading {data_path}...")
     df = pd.read_csv(data_path)
     

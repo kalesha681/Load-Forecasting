@@ -15,6 +15,7 @@ from .config import (
     COL_REGION_DAILY, COL_DATE_DAILY, COL_HOUR_DAILY, COL_DEMAND_DAILY,
     COL_REGION_LDC, COL_PEAK_PCT_LDC, COL_TIME_PCT_LDC
 )
+from .utils import validate_path
 
 def validate_schema(df: pd.DataFrame, required_columns: List[str], filename: str) -> None:
     """
@@ -79,6 +80,10 @@ def process_yearly_data(input_path: Union[str, Path], output_path: Union[str, Pa
         FileNotFoundError: If input file does not exist.
         ValueError: If schema validation fails.
     """
+    # Security Check
+    input_path = validate_path(input_path)
+    output_path = validate_path(output_path)
+    
     input_path = str(input_path)
     output_path = str(output_path)
     logger.info(f"Loading yearly data from {input_path}")
@@ -142,6 +147,11 @@ def process_peak_day_data(input_path: Union[str, Path], output_path: Union[str, 
     Raises:
         FileNotFoundError: If input file does not exist.
     """
+
+    # Security Check
+    input_path = validate_path(input_path)
+    output_path = validate_path(output_path)
+    
     input_path = str(input_path)
     output_path = str(output_path)
     logger.info(f"Loading peak day data from {input_path}")
@@ -187,6 +197,11 @@ def process_ldc_data(input_path: Union[str, Path], output_path: Union[str, Path]
     Raises:
         FileNotFoundError: If input file does not exist.
     """
+
+    # Security Check
+    input_path = validate_path(input_path)
+    output_path = validate_path(output_path)
+    
     input_path = str(input_path)
     output_path = str(output_path)
     logger.info(f"Loading LDC data from {input_path}")
