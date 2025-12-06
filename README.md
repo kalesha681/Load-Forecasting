@@ -1,5 +1,30 @@
 # Electrical Load Forecasting & Grid Analytics Framework
 
+![CI Status](https://github.com/kalesha681/Load-Forecasting/actions/workflows/ci.yml/badge.svg)
+
+## Quick Start (< 60 Seconds)
+
+1. **Install Dependencies**
+   > [!NOTE]
+   > **Requirements**: Python 3.10 is the tested version.
+   > CI/CD pipeline runs on CPU-only. GPU is optional for LSTM.
+   
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Verify Installation (Sample Mode)**
+   Runs the full pipeline on a tiny, self-contained sample dataset. **No external ICED data required.**
+   ```bash
+   python main.py --sample
+   ```
+
+3. **Run Full Pipeline (Real Data)**
+   Requires raw ICED datasets in `data/raw/`.
+   ```bash
+   python main.py all
+   ```
+
 ## Project Overview
 This repository implements a production-grade forecasting and analytics pipeline for electrical power systems. Using real-world data from the Intelligent Climate & Energy Database (ICED) by NITI Aayog, the project focuses on accurate long-term demand forecasting, short-term peak stress analysis, and grid capacity utilization metrics.
 

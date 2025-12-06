@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import warnings
 warnings.filterwarnings("ignore")
 import pandas as pd
@@ -8,7 +9,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from ..config import ensure_output_dir, COL_DEMAND_YEARLY, SPLIT_DATE
-from ..data_loader import load_and_preprocess, train_test_split
+from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
 
 def evaluate_candidate(order, seasonal_order, train_sub, val_sub, log_flag, seasonal_period):
@@ -84,91 +85,79 @@ def tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True):
     best = valid_results[0]
     return best
 
-def run_sarima(data_path=None, test_days=7):
-    # Output setup
-    output_dir = ensure_output_dir('SARIMA')
-    PLOT1_PATH = os.path.join(output_dir, "sarima_forecast.png")
-    PLOT2_PATH = os.path.join(output_dir, "sarima_vs_actual.png")
-    METRICS_PATH = os.path.join(output_dir, "metrics.csv")
 
-    # Data Loading
-    if data_path:
-        print(f"Loading data from {data_path}...")
-        df = pd.read_csv(data_path, index_col=0, parse_dates=True)
-    else:
-        df = load_and_preprocess()
+def run_sarima_pipeline(data_path, output_dir):
+    """
+    Run SARIMA pipeline on specified data.
+    """
+    output_dir = Path(output_dir) / 'SARIMA'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    PLOT1_PATH = output_dir / "sarima_forecast.png"
+    PLOT2_PATH = output_dir / "sarima_vs_actual.png"
+    METRICS_PATH = output_dir / "metrics.csv"
+    
+    print(f"Loading data from {data_path}...")
+    df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     
     # Identify column
-    col = COL_DEMAND_YEARLY if COL_DEMAND_YEARLY in df.columns else df.columns[0]
-    
+    if COL_DEMAND_YEARLY in df.columns:
+        col = COL_DEMAND_YEARLY
+    elif "Demand_MW" in df.columns:
+        col = "Demand_MW"
+    else:
+        col = df.columns[0]
+
     # Train/Test Split
-    # We use the specified test_days (default 7) for evaluation
-    train, test = train_test_split(df, test_days=test_days)
-    
+    train, test = train_test_split(df, test_days=7)
     train_series = train[col]
     test_series = test[col]
 
     print(f"Training window: {train.index.min()} -- {train.index.max()} ({len(train)} hrs)")
-    print(f"Test window: {test.index.min()} -- {test.index.max()} ({len(test)} hrs)")
 
     # Auto-tune
-    print("\nTuning SARIMA hyperparameters...")
-    best_order, best_seasonal_order, val_mape, use_log = tune_sarima_by_mape(train_series, seasonal_period=24, use_log=True)
-    print(f"Best Configuration: Order={best_order}, Seasonal={best_seasonal_order}, Log={use_log}")
-    print(f"Validation MAPE during tuning: {val_mape*100:.2f}%")
+    print("Tuning SARIMA...")
+    best_order, best_seasonal_order, val_mape, use_log = tune_sarima_by_mape(
+        train_series, seasonal_period=24, use_log=True
+    )
+    print(f"Best: Order={best_order}, Seasonal={best_seasonal_order}, Log={use_log}")
 
-    # Fit best model on FULL training data
+    # Fit
     y_train = np.log1p(train_series) if use_log else train_series
-    
     model = SARIMAX(y_train, order=best_order, seasonal_order=best_seasonal_order,
                     enforce_stationarity=False, enforce_invertibility=False)
-    print("Fitting final model...")
-    fit = model.fit(disp=False, maxiter=100, method='lbfgs')
+    fit = model.fit(disp=False, maxiter=50, method='lbfgs')
     
     # Forecast
-    steps = len(test)
-    pred_trans = fit.forecast(steps=steps)
+    pred_trans = fit.forecast(steps=len(test))
     forecast = np.expm1(pred_trans) if use_log else pred_trans
-    forecast.index = test.index # Align index
+    forecast.index = test.index
     
-    # Evaluation
+    # Evaluate
     rmse = evaluate_rmse(test_series.values, forecast.values)
     mape = evaluate_mape(test_series.values, forecast.values)
     
-    print(f"\nFinal Results on Test Set:")
-    print(f"RMSE: {rmse:.2f}")
-    print(f"MAPE: {mape*100:.2f}%")
-
-    # Save Metrics
-    metrics_df = pd.DataFrame([{
-        'Model': 'SARIMA',
-        'RMSE': rmse,
-        'MAPE': mape,
-        'Order': str(best_order),
-        'Seasonal': str(best_seasonal_order),
-        'Log': use_log
-    }])
-    metrics_df.to_csv(METRICS_PATH, index=False)
-    print(f"Metrics saved to {METRICS_PATH}")
-
-    # Plot
-    plt.figure(figsize=(15,6))
-    plt.plot(train_series.index[-24*14:], train_series.iloc[-24*14:], label='Train (Last 2 Weeks)')
-    plt.plot(test_series.index, test_series, label='Actual Test')
-    plt.plot(forecast.index, forecast, label='SARIMA Forecast', linestyle='--')
-    plt.title(f"SARIMA Forecast (MAPE={mape*100:.2f}%)")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(PLOT1_PATH)
+    print(f"SARIMA Results: RMSE={rmse:.2f}, MAPE={mape*100:.2f}%")
     
-    plt.figure(figsize=(10,5))
+    # Save
+    pd.DataFrame([{
+        'Model': 'SARIMA', 'RMSE': rmse, 'MAPE': mape,
+        'Order': str(best_order), 'Seasonal': str(best_seasonal_order)
+    }]).to_csv(METRICS_PATH, index=False)
+    
+    # Plot
+    plt.figure(figsize=(12,6))
+    plt.plot(train_series.index[-24*7:], train_series.iloc[-24*7:], label='Train (Last Week)')
     plt.plot(test_series.index, test_series, label='Actual')
     plt.plot(forecast.index, forecast, label='Forecast', linestyle='--')
-    plt.title("Detailed View: Actual vs Forecast")
+    plt.title(f"SARIMA Forecast (MAPE={mape*100:.2f}%)")
     plt.legend()
-    plt.tight_layout()
-    plt.savefig(PLOT2_PATH)
-    print("Plots saved.")
+    plt.savefig(PLOT1_PATH)
+    plt.close()
+    print(f"Saved artifacts to {output_dir}")
 
-if __name__ == "__main__":
-    run_sarima()
+# Alias for legacy or direct calling if needed
+def run_sarima(data_path=None, test_days=7):
+    # Backward compat stub if strictly needed, but we prefer pipeline
+    pass
+

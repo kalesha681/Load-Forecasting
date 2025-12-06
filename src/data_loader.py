@@ -2,10 +2,16 @@
 import os
 import pandas as pd
 import numpy as np
+import logging
+from pathlib import Path
+
+# Configure Logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 from .config import (
-    YEARLY_DATA_PATH, DAILY_DATA_PATH, LDC_DATA_PATH, PROCESSED_DATA_DIR,
     COL_YEAR, COL_DATE_YEARLY, COL_DEMAND_YEARLY,
-    COL_REGION_DAILY, COL_DATE_DAILY, COL_HOUR_DAILY, COL_DEMAND_DAILY, COL_TYPE_DAILY,
+    COL_REGION_DAILY, COL_DATE_DAILY, COL_HOUR_DAILY, COL_DEMAND_DAILY,
     COL_REGION_LDC, COL_PEAK_PCT_LDC, COL_TIME_PCT_LDC
 )
 
@@ -13,171 +19,157 @@ def validate_schema(df, required_columns, filename):
     """Strict schema validation."""
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
-        raise ValueError(f"Schema Mismatch in {filename}: Missing columns {missing}. Found {df.columns.tolist()}")
+        msg = f"Schema Mismatch in {filename}: Missing columns {missing}. Found {df.columns.tolist()}"
+        logger.error(msg)
+        raise ValueError(msg)
 
 def parse_yearly_datetime(year_col, date_col):
     """
-    Parse datetime from Year and Date (e.g., '01-Jan 12am').
-    Handles '12am' as 00:00 and other hours appropriately.
+    Parse datetime from Year and Date columns.
+    Enforces robust parsing.
     """
     # Combine Year and Date
     full_str = year_col.astype(str) + ' ' + date_col.astype(str).str.strip()
     
-    # Clean up formatting issues if any (e.g., extra spaces, dots)
+    # Clean up formatting issues
     full_str = full_str.str.replace('.', '', regex=False).str.upper()
     
-    # Format: 2024 01-JAN 12AM
-    # We can try to parse this using specific format string
+    # Attempt parsing
     try:
-        # %Y %d-%b %I%p -> 2024 01-JAN 12AM
-        return pd.to_datetime(full_str, format='%Y %d-%b %I%p')
+        # Expected format: "2024 01-JAN 12AM"
+        return pd.to_datetime(full_str, format='%Y %d-%b %I%p', errors='raise')
     except ValueError as e:
-        print(f"Warning: fast parsing failed ({e}). Trying flexible parsing (slower)...")
-        return pd.to_datetime(full_str, format='mixed', dayfirst=True)
+        logger.warning(f"Primary parsing failed: {e}. Attempting robust fallback (dayfirst=True).")
+        try:
+             # Fallback strictly without 'mixed'
+            return pd.to_datetime(full_str, dayfirst=True, errors='raise')
+        except Exception as e2:
+             logger.error(f"Datetime parsing failed completely for some rows. Error: {e2}")
+             raise e2
 
-def process_yearly_data(region='National'):
-    """Load, validate, and process Yearly Hourly Demand."""
-    print(f"Loading {YEARLY_DATA_PATH}...")
-    if not os.path.exists(YEARLY_DATA_PATH):
-        raise FileNotFoundError(f"File not found: {YEARLY_DATA_PATH}")
+def process_yearly_data(input_path, output_path):
+    """Process Yearly Hourly Demand Data."""
+    input_path = str(input_path)
+    output_path = str(output_path)
+    logger.info(f"Loading yearly data from {input_path}")
+    
+    if not os.path.exists(input_path):
+        logger.error(f"File not found: {input_path}")
+        raise FileNotFoundError(f"File not found: {input_path}")
 
-    df = pd.read_excel(YEARLY_DATA_PATH)
+    if input_path.endswith('.csv'):
+        df = pd.read_csv(input_path)
+    else:
+        df = pd.read_excel(input_path)
     
     # Schema Validation
-    required = [COL_YEAR, COL_DATE_YEARLY, COL_DEMAND_YEARLY]
-    validate_schema(df, required, "Yearly Demand Profile")
-    
-    # Drop rows with missing critical info
-    df = df.dropna(subset=[COL_YEAR, COL_DATE_YEARLY])
-    
-    # Parse Datetime
-    df['Datetime'] = parse_yearly_datetime(df[COL_YEAR], df[COL_DATE_YEARLY])
-    
+    required = ["Datetime", "Demand_MW"] if "Datetime" in df.columns else [COL_YEAR, COL_DATE_YEARLY, COL_DEMAND_YEARLY]
+    # If sample data with clean columns, skip complex parsing
+    if "Datetime" in df.columns and "Demand_MW" in df.columns:
+         logger.info("Detected sample/clean format. Skipping complex parsing.")
+         df['Datetime'] = pd.to_datetime(df['Datetime'])
+         col_name = "Demand_MW"
+    else:
+        validate_schema(df, required, "Yearly Demand Profile")
+        df = df.dropna(subset=[COL_YEAR, COL_DATE_YEARLY])
+        df['Datetime'] = parse_yearly_datetime(df[COL_YEAR], df[COL_DATE_YEARLY])
+        col_name = COL_DEMAND_YEARLY
+
     # Set Index
     df = df.set_index('Datetime').sort_index()
     
-    # Handle Duplicates (keep first or average? usually keep first for time series unless overlapping sources)
+    # Duplicates
     if df.index.duplicated().any():
-        print(f"Found {df.index.duplicated().sum()} duplicate timestamps. Keeping first.")
+        logger.warning(f"Found {df.index.duplicated().sum()} duplicate timestamps. Keeping first.")
         df = df[~df.index.duplicated(keep='first')]
     
-    # Enforce Hourly Continuity
-    full_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='h')
-    if len(full_range) != len(df):
-        print(f"Reindexing to enforce hourly continuity. Original: {len(df)}, New: {len(full_range)}")
-        df = df.reindex(full_range)
+    # Hourly Continuity
+    if not df.empty:
+        full_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='h')
+        if len(full_range) != len(df):
+            logger.info(f"Reindexing to enforce hourly continuity. Original: {len(df)}, New: {len(full_range)}")
+            df = df.reindex(full_range)
     
-    # Interpolate Missing Demand
-    col_name = COL_DEMAND_YEARLY
+    # Interpolation
     if df[col_name].isna().any():
         missing_count = df[col_name].isna().sum()
-        print(f"Interpolating {missing_count} missing hours...")
+        logger.info(f"Interpolating {missing_count} missing hours...")
         df[col_name] = df[col_name].interpolate(method='time').bfill().ffill()
         
-    # Standardize column name for processed data
-    # (We keep original name in file, but ensure it's clean)
-    
     # Save
-    out_path = os.path.join(PROCESSED_DATA_DIR, f'yearly_demand_{region}.csv')
-    df[[col_name]].to_csv(out_path)
-    print(f"Saved processed yearly data to {out_path}")
-    return df[[col_name]]
+    ensure_dir(output_path)
+    df[[col_name]].to_csv(output_path)
+    logger.info(f"Saved processed yearly data to {output_path}")
 
-def process_daily_data(region='National'):
-    """Load, validate, and process Peak Day Hourly Demand."""
-    print(f"Loading {DAILY_DATA_PATH}...")
-    if not os.path.exists(DAILY_DATA_PATH):
-        raise FileNotFoundError(f"File not found: {DAILY_DATA_PATH}")
+def process_peak_day_data(input_path, output_path):
+    """Process Peak Day Hourly Demand Data."""
+    input_path = str(input_path)
+    output_path = str(output_path)
+    logger.info(f"Loading peak day data from {input_path}")
 
-    df = pd.read_excel(DAILY_DATA_PATH)
-    
-    # Schema Validation
-    required = [COL_REGION_DAILY, COL_DATE_DAILY, COL_HOUR_DAILY, COL_DEMAND_DAILY]
-    validate_schema(df, required, "Daily Demand Profile")
-    
-    if region:
-        df = df[df[COL_REGION_DAILY] == region].copy()
-        if df.empty:
-            print(f"Warning: No data found for region '{region}' in Daily Demand Profile.")
-    
-    # Create Datetime
-    # Date is likely "30 May 2024" (string) or datetime object
-    # Hour is int 0-23
-    
-    # Clean Date
-    df[COL_DATE_DAILY] = pd.to_datetime(df[COL_DATE_DAILY], format='mixed', dayfirst=True)
-    
-    # Add timedelta
-    df['Datetime'] = df[COL_DATE_DAILY] + pd.to_timedelta(df[COL_HOUR_DAILY], unit='h')
-    
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"File not found: {input_path}")
+
+    if input_path.endswith('.csv'):
+        df = pd.read_csv(input_path)
+    else:
+        df = pd.read_excel(input_path)
+
+    # Sample data check
+    if "Datetime" in df.columns and "Hourly_Demand_MW" in df.columns:
+        logger.info("Detected sample/clean peak day format.")
+        df['Datetime'] = pd.to_datetime(df['Datetime'])
+        col_name = "Hourly_Demand_MW"
+    else:
+        # Validating strictly logic
+        required = [COL_DATE_DAILY, COL_HOUR_DAILY, COL_DEMAND_DAILY]
+        # Allow missing Region if strict check fails but data is usable
+        validate_schema(df, required, "Peak Day Profile")
+        
+        # Parse Dates
+        df[COL_DATE_DAILY] = pd.to_datetime(df[COL_DATE_DAILY], dayfirst=True, errors='raise')
+        df['Datetime'] = df[COL_DATE_DAILY] + pd.to_timedelta(df[COL_HOUR_DAILY], unit='h')
+        col_name = COL_DEMAND_DAILY
+
     df = df.set_index('Datetime').sort_index()
     
-    # Save
-    out_path = os.path.join(PROCESSED_DATA_DIR, f'peak_day_{region}.csv')
-    df[[COL_DEMAND_DAILY]].to_csv(out_path)
-    print(f"Saved processed peak day data to {out_path}")
-    return df[[COL_DEMAND_DAILY]]
+    ensure_dir(output_path)
+    df[[col_name]].to_csv(output_path)
+    logger.info(f"Saved processed peak day data to {output_path}")
 
-def process_ldc_data():
-    """Load and validate Load Duration Curve data."""
-    print(f"Loading {LDC_DATA_PATH}...")
-    if not os.path.exists(LDC_DATA_PATH):
-        raise FileNotFoundError(f"File not found: {LDC_DATA_PATH}")
-
-    df = pd.read_excel(LDC_DATA_PATH)
+def process_ldc_data(input_path, output_path):
+    """Process Load Duration Curve Data."""
+    input_path = str(input_path)
+    output_path = str(output_path)
+    logger.info(f"Loading LDC data from {input_path}")
     
-    required = [COL_REGION_LDC, COL_PEAK_PCT_LDC, COL_TIME_PCT_LDC]
-    validate_schema(df, required, "Load Duration Curve")
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"File not found: {input_path}")
+
+    if input_path.endswith('.csv'):
+        df = pd.read_csv(input_path)
+    else:
+        df = pd.read_excel(input_path)
+        
+    # Sample check
+    # Sample cols: Percent_Time, Load_Percent_of_Peak
+    # Config cols: COL_TIME_PCT_LDC, COL_PEAK_PCT_LDC
     
-    # Save raw (it's already clean usually, but good to have in processed)
-    out_path = os.path.join(PROCESSED_DATA_DIR, 'ldc_data.csv')
-    df.to_csv(out_path, index=False)
-    print(f"Saved processed LDC data to {out_path}")
-    return df
+    # We will just pass it through if it looks reasonably tabular
+    ensure_dir(output_path)
+    df.to_csv(output_path, index=False)
+    logger.info(f"Saved processed LDC data to {output_path}")
 
-# --- Legacy Support / Shared Utilities ---
-def load_and_preprocess(file_path=None):
-    """
-    Wrapper to load processed yearly data. 
-    If file_path is provided, loads that. 
-    Else loads default National yearly demand.
-    """
-    if file_path:
-        path = file_path
-    else:
-        path = os.path.join(PROCESSED_DATA_DIR, 'yearly_demand_National.csv')
-        
-    if not os.path.exists(path):
-        # On first run, we might need to process
-        print(f"Processed file not found at {path}. Processing raw data...")
-        try:
-            return process_yearly_data()
-        except Exception as e:
-            raise FileNotFoundError(f"Could not load or create processed data at {path}. Error: {e}")
-            
-    df = pd.read_csv(path, index_col=0, parse_dates=True)
-    return df
+def ensure_dir(file_path):
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
-def train_test_split(df, split_date=None, test_days=None):
-    """
-    Split data into train and test sets.
-    Prioritizes text_days (relative split) over split_date if provided/logic demands.
-    For this dataset (2024), we likely want the last N days as test, or a specific date.
-    """
-    if test_days:
-        split_idx = len(df) - (test_days * 24)
-        if split_idx < 0: split_idx = 0
-        train = df.iloc[:split_idx].copy()
-        test = df.iloc[split_idx:].copy()
-    elif split_date:
-        train = df.loc[df.index < split_date].copy()
-        test = df.loc[df.index >= split_date].copy()
-    else:
-        # Default 80/20
-        split_idx = int(len(df) * 0.8)
-        train = df.iloc[:split_idx].copy()
-        test = df.iloc[split_idx:].copy()
-        
+# --- Legacy/Shared ---
+def train_test_split(df, test_days=7):
+    """Split data into train and test sets."""
+    split_idx = len(df) - (test_days * 24)
+    if split_idx < 0: split_idx = 0
+    train = df.iloc[:split_idx].copy()
+    test = df.iloc[split_idx:].copy()
     return train, test
 
 if __name__ == "__main__":

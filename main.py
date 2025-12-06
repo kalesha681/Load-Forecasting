@@ -1,136 +1,149 @@
-import sys
-import os
 import argparse
-import pandas as pd
+import os
+import sys
+import logging
+from pathlib import Path
 
-# Add src to path so we can import modules
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# --- Configure Logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
-from src.models.lstm import run_lstm
-from src.models.sarima import run_sarima
-from src.models.peak_day import run_peak_day_analysis
-from src.models.ldc import run_ldc_analysis
-from src.data_loader import process_yearly_data, process_daily_data, process_ldc_data
-from src.config import PROCESSED_DATA_DIR, ensure_output_dir
+# --- Ensure src is on PYTHONPATH ---
+ROOT = Path(__file__).resolve().parent
+SRC = ROOT / "src"
+sys.path.append(str(SRC))
 
-def generate_summary_report():
-    print("\n" + "="*40)
-    print("      GENERATING FINAL RESEARCH REPORT")
-    print("="*40)
-    
-    # 1. Forecasting Metrics (SARIMA vs LSTM)
-    print("\n--- Comparative Forecasting Metrics (Yearly Data) ---")
-    sarima_metrics_path = os.path.join(ensure_output_dir('SARIMA'), 'metrics.csv')
-    lstm_metrics_path = os.path.join(ensure_output_dir('LSTM'), 'metrics.csv')
-    
-    metrics = []
-    if os.path.exists(sarima_metrics_path):
-        metrics.append(pd.read_csv(sarima_metrics_path))
-    if os.path.exists(lstm_metrics_path):
-        metrics.append(pd.read_csv(lstm_metrics_path))
-        
-    if metrics:
-        combined = pd.concat(metrics, ignore_index=True)
-        # Select common columns if schemas differ slightly
+# --- Imports from project ---
+from src.data_loader import (
+    process_yearly_data,
+    process_peak_day_data,
+    process_ldc_data,
+)
+
+from src.models.sarima import run_sarima_pipeline
+from src.models.lstm import run_lstm_pipeline
+from src.models.peak_day import run_peak_day_pipeline
+from src.models.ldc import run_ldc_pipeline
+
+
+# -------------------------------------------------------------------
+# Argument Parser
+# -------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="Electrical Load Forecasting Pipeline")
+parser.add_argument("mode", nargs="?", default="all",
+                    choices=["all", "sarima", "lstm", "peak", "ldc"],
+                    help="Which pipeline to run")
+parser.add_argument("--sample", action="store_true",
+                    help="Run using tiny sample dataset for quick verification")
+
+args = parser.parse_args()
+
+
+# -------------------------------------------------------------------
+# Path Resolution
+# -------------------------------------------------------------------
+if args.sample:
+    logger.info("Running in SAMPLE mode")
+    YEARLY_RAW = ROOT / "data/sample/yearly_sample.csv"
+    PEAK_RAW   = ROOT / "data/sample/peak_day_sample.csv"
+    LDC_RAW    = ROOT / "data/sample/ldc_sample.csv"
+
+    YEARLY_OUT = ROOT / "data/sample/yearly_sample_processed.csv"
+    PEAK_OUT   = ROOT / "data/sample/peak_sample_processed.csv"
+    LDC_OUT    = ROOT / "data/sample/ldc_sample_processed.csv"
+
+else:
+    YEARLY_RAW = ROOT / "data/raw/yearly_hourly_demand_2024.xlsx"
+    PEAK_RAW   = ROOT / "data/raw/peak_day_hourly_demand.xlsx"
+    LDC_RAW    = ROOT / "data/raw/load_duration_curve.xlsx"
+
+    YEARLY_OUT = ROOT / "data/processed/yearly_demand_National.csv"
+    PEAK_OUT   = ROOT / "data/processed/peak_day_National.csv"
+    LDC_OUT    = ROOT / "data/processed/ldc_data.csv"
+
+
+PLOTS_DIR = ROOT / "plots"
+PLOTS_DIR.mkdir(exist_ok=True)
+
+
+# -------------------------------------------------------------------
+# Stage 1 — Data Engineering
+# -------------------------------------------------------------------
+def run_data_engineering():
+    logger.info("[Stage 1] Data Engineering & Validation")
+
+    logger.info(f"Loading {YEARLY_RAW}...")
+    process_yearly_data(YEARLY_RAW, YEARLY_OUT)
+
+    logger.info(f"Loading {PEAK_RAW}...")
+    process_peak_day_data(PEAK_RAW, PEAK_OUT)
+
+    logger.info(f"Loading {LDC_RAW}...")
+    process_ldc_data(LDC_RAW, LDC_OUT)
+
+    logger.info("[Stage 1] Data processing completed.")
+
+
+# -------------------------------------------------------------------
+# Stage 2 — Forecasting Pipelines
+# -------------------------------------------------------------------
+def run_forecasting():
+    logger.info("[Stage 2] Forecasting Pipelines")
+
+    if args.mode in ("all", "sarima"):
+        logger.info("--- Running SARIMA ---")
+        run_sarima_pipeline(YEARLY_OUT, PLOTS_DIR)
+
+    if args.mode in ("all", "lstm"):
+        logger.info("--- Running LSTM ---")
         try:
-            print(combined[['Model', 'RMSE', 'MAPE']].to_markdown(index=False))
-        except ImportError:
-            print(combined[['Model', 'RMSE', 'MAPE']].to_string(index=False))
-        
-        # Save combined
-        report_path = os.path.join(ensure_output_dir('Reports'), 'forecasting_comparison.csv')
-        combined.to_csv(report_path, index=False)
-        print(f"Saved to {report_path}")
-    else:
-        print("No forecasting metrics found.")
+            run_lstm_pipeline(YEARLY_OUT, PLOTS_DIR)
+        except ImportError as e:
+            if "TensorFlow" in str(e):
+                logger.warning(f"Skipping LSTM pipeline: {e}")
+                logger.warning("Tip: Install TensorFlow to enable this feature. Continuing with other stages...")
+            else:
+                raise e
 
-    # 2. Peak Day Metrics
-    print("\n--- Peak Day Forecast Accuracy ---")
-    peak_metrics_path = os.path.join(ensure_output_dir('Peak_Day'), 'metrics.csv')
-    if os.path.exists(peak_metrics_path):
-        peak_df = pd.read_csv(peak_metrics_path)
-        try:
-            print(peak_df.to_markdown(index=False))
-        except ImportError:
-            print(peak_df.to_string(index=False))
-    else:
-        print("No peak day metrics found.")
 
-    # 3. LDC Metrics
-    print("\n--- Load Duration Curve Statistics ---")
-    ldc_metrics_path = os.path.join(ensure_output_dir('LDC'), 'ldc_metrics.csv')
-    if os.path.exists(ldc_metrics_path):
-        ldc_df = pd.read_csv(ldc_metrics_path)
-        try:
-            print(ldc_df.to_markdown(index=False))
-        except ImportError:
-            print(ldc_df.to_string(index=False))
-    else:
-        print("No LDC metrics found.")
+# -------------------------------------------------------------------
+# Stage 3 — Analytics Pipelines
+# -------------------------------------------------------------------
+def run_analytics():
+    logger.info("[Stage 3] Analytics Pipelines")
 
-def run_all(full_etl=True):
-    if full_etl:
-        print("\n[Stage 1] Data Engineering & Validation")
-        process_yearly_data()
-        process_daily_data()
-        process_ldc_data()
-    
-    print("\n[Stage 2] Forecasting Pipelines")
-    # Run SARIMA
-    try:
-        run_sarima()
-    except Exception as e:
-        print(f"SARIMA Failed: {e}")
+    if args.mode in ("all", "peak"):
+        logger.info("--- Running Peak Day Analysis ---")
+        run_peak_day_pipeline(YEARLY_OUT, PEAK_OUT, PLOTS_DIR)
 
-    # Run LSTM
-    try:
-        run_lstm()
-    except Exception as e:
-        print(f"LSTM Failed: {e}")
-        import traceback
-        traceback.print_exc()
+    if args.mode in ("all", "ldc"):
+        logger.info("--- Running Load Duration Curve (LDC) Analysis ---")
+        run_ldc_pipeline(LDC_OUT, PLOTS_DIR)
 
-    print("\n[Stage 3] Analytics Pipelines")
-    # Run Peak Day
-    try:
-        run_peak_day_analysis()
-    except Exception as e:
-        print(f"Peak Day Failed: {e}")
 
-    # Run LDC
-    try:
-        run_ldc_analysis()
-    except Exception as e:
-        print(f"LDC Failed: {e}")
-
-    # Generate Report
-    print("\n[Stage 4] Comparative Reporting")
-    generate_summary_report()
-
+# -------------------------------------------------------------------
+# Main Orchestrator
+# -------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Load Forecasting & Grid Analytics Pipeline")
-    parser.add_argument('mode', type=str, choices=['all', 'etl', 'lstm', 'sarima', 'peak_day', 'ldc', 'report'], 
-                        help="Task to run")
-    parser.add_argument('--no-etl', action='store_true', help="Skip ETL in 'all' mode")
-    
-    args = parser.parse_args()
-    
-    if args.mode == 'all':
-        run_all(full_etl=not args.no_etl)
-    elif args.mode == 'etl':
-        process_yearly_data()
-        process_daily_data()
-        process_ldc_data()
-    elif args.mode == 'sarima':
-        run_sarima()
-    elif args.mode == 'lstm':
-        run_lstm()
-    elif args.mode == 'peak_day':
-        run_peak_day_analysis()
-    elif args.mode == 'ldc':
-        run_ldc_analysis()
-    elif args.mode == 'report':
-        generate_summary_report()
+    try:
+        run_data_engineering()
+        run_forecasting()
+        run_analytics()
+
+        logger.info("========================================")
+        logger.info("   PIPELINE EXECUTION COMPLETED")
+        logger.info("========================================")
+
+    except Exception as e:
+        logger.critical("FATAL ERROR", exc_info=True)
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

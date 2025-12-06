@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import os
 
-def plot_time_series(df, title, outpath=None, col_name='PJME_MW'):
+def plot_time_series(df, title, outpath=None, col_name='Demand_MW'):
     # If col_name not in df, try to use the first column
     if col_name not in df.columns and not df.empty:
         col_name = df.columns[0]
@@ -15,7 +15,7 @@ def plot_time_series(df, title, outpath=None, col_name='PJME_MW'):
         plt.savefig(outpath)
     plt.show()
 
-def plot_train_test_split(train_df, test_df, outpath=None, col_name='PJME_MW'):
+def plot_train_test_split(train_df, test_df, outpath=None, col_name='Demand_MW'):
     # If col_name not in df, try to use the first column
     if col_name not in train_df.columns and not train_df.empty:
         col_name = train_df.columns[0]
