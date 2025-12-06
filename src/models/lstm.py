@@ -28,7 +28,7 @@ except ImportError:
         print("Warning: TensorFlow/Keras not found. LSTM will fail if run.")
 
 
-from ..config import ensure_output_dir, COL_DEMAND_YEARLY, PROCESSED_DATA_DIR
+from ..config import ensure_output_dir, COL_DEMAND_YEARLY, PROCESSED_DATA_DIR, MODEL_CONFIG, DATA_CONFIG
 from ..data_loader import train_test_split
 from ..metrics import evaluate_mape, evaluate_rmse
 from ..visualization import plot_time_series, plot_train_test_split, plot_forecast_vs_actual
@@ -132,6 +132,8 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     METRICS_PATH = output_dir / 'metrics.csv'
     MODEL_OUT = output_dir / 'lstm_model.keras'
     
+    lstm_config = MODEL_CONFIG['lstm']
+    
     print(f"Loading data from {data_path}...")
     df = pd.read_csv(data_path, index_col=0, parse_dates=True)
     
@@ -143,14 +145,14 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     else:
         col = df.columns[0]
         
-    train, test = train_test_split(df, test_days=7)
+    train, test = train_test_split(df, test_days=DATA_CONFIG['test_days'])
     
     # Scaling
     scaler = MinMaxScaler()
     train_scaled = scaler.fit_transform(train[[col]])
     test_scaled = scaler.transform(test[[col]])
     
-    N_INPUT = 48
+    N_INPUT = lstm_config['n_input']
     X_train, y_train = create_sequences(train_scaled, n_input=N_INPUT)
     
     # For test, we need context
@@ -164,14 +166,14 @@ def run_lstm_pipeline(data_path: Union[str, Path], output_dir: Union[str, Path])
     # Model
     model = Sequential([
         Input(shape=(N_INPUT, 1)),
-        LSTM(64),
-        Dropout(0.2),
+        LSTM(lstm_config['units']),
+        Dropout(lstm_config['dropout']),
         Dense(1)
     ])
-    model.compile(optimizer='adam', loss='mse')
+    model.compile(optimizer=lstm_config['optimizer'], loss=lstm_config['loss'])
     
     # Train
-    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
+    model.fit(X_train, y_train, epochs=lstm_config['epochs'], batch_size=lstm_config['batch_size'], verbose=0)
     
     # Predict
     pred_scaled = model.predict(X_test, verbose=0)
